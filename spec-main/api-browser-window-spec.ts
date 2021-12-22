@@ -6,9 +6,9 @@ import * as os from 'os';
 import * as qs from 'querystring';
 import * as http from 'http';
 import { AddressInfo } from 'net';
-import { app, BrowserWindow, BrowserView, ipcMain, OnBeforeSendHeadersListenerDetails, protocol, screen, webContents, session, WebContents, BrowserWindowConstructorOptions } from 'electron/main';
+import { app, BrowserWindow, BrowserView, dialog, ipcMain, OnBeforeSendHeadersListenerDetails, protocol, screen, webContents, session, WebContents, BrowserWindowConstructorOptions } from 'electron/main';
 
-import { emittedOnce, emittedUntil } from './events-helpers';
+import { emittedOnce, emittedUntil, emittedNTimes } from './events-helpers';
 import { ifit, ifdescribe, defer, delay } from './spec-helpers';
 import { closeWindow, closeAllWindows } from './window-helpers';
 
@@ -100,6 +100,13 @@ describe('BrowserWindow module', () => {
     afterEach(async () => {
       await closeWindow(w);
       w = null as unknown as BrowserWindow;
+    });
+
+    it('should work if called when a messageBox is showing', async () => {
+      const closed = emittedOnce(w, 'closed');
+      dialog.showMessageBox(w, { message: 'Hello Error' });
+      w.close();
+      await closed;
     });
 
     it('should emit unload handler', async () => {
@@ -1411,13 +1418,10 @@ describe('BrowserWindow module', () => {
   describe('BrowserWindow.setAlwaysOnTop(flag, level)', () => {
     let w = null as unknown as BrowserWindow;
 
+    afterEach(closeAllWindows);
+
     beforeEach(() => {
       w = new BrowserWindow({ show: true });
-    });
-
-    afterEach(async () => {
-      await closeWindow(w);
-      w = null as unknown as BrowserWindow;
     });
 
     it('sets the window as always on top', () => {
@@ -1446,6 +1450,16 @@ describe('BrowserWindow module', () => {
       w.setAlwaysOnTop(true);
       const [, alwaysOnTop] = await alwaysOnTopChanged;
       expect(alwaysOnTop).to.be.true('is not alwaysOnTop');
+    });
+
+    ifit(process.platform === 'darwin')('honors the alwaysOnTop level of a child window', () => {
+      w = new BrowserWindow({ show: false });
+      const c = new BrowserWindow({ parent: w });
+      c.setAlwaysOnTop(true, 'screen-saver');
+
+      expect(w.isAlwaysOnTop()).to.be.false();
+      expect(c.isAlwaysOnTop()).to.be.true('child is not always on top');
+      expect((c as any)._getAlwaysOnTopLevel()).to.equal('screen-saver');
     });
   });
 
@@ -4172,6 +4186,42 @@ describe('BrowserWindow module', () => {
         expect(w.isFullScreen()).to.be.false('isFullScreen');
       });
 
+      it('handles several transitions starting with fullscreen', async () => {
+        const w = new BrowserWindow({ fullscreen: true, show: true });
+
+        expect(w.isFullScreen()).to.be.true('not fullscreen');
+
+        w.setFullScreen(false);
+        w.setFullScreen(true);
+
+        const enterFullScreen = emittedNTimes(w, 'enter-full-screen', 2);
+        await enterFullScreen;
+
+        expect(w.isFullScreen()).to.be.true('not fullscreen');
+
+        await delay();
+        const leaveFullScreen = emittedOnce(w, 'leave-full-screen');
+        w.setFullScreen(false);
+        await leaveFullScreen;
+
+        expect(w.isFullScreen()).to.be.false('is fullscreen');
+      });
+
+      it('handles several transitions in close proximity', async () => {
+        const w = new BrowserWindow();
+
+        expect(w.isFullScreen()).to.be.false('is fullscreen');
+
+        w.setFullScreen(true);
+        w.setFullScreen(false);
+        w.setFullScreen(true);
+
+        const enterFullScreen = emittedNTimes(w, 'enter-full-screen', 2);
+        await enterFullScreen;
+
+        expect(w.isFullScreen()).to.be.true('not fullscreen');
+      });
+
       it('does not crash when exiting simpleFullScreen (properties)', async () => {
         const w = new BrowserWindow();
         w.setSimpleFullScreen(true);
@@ -4205,6 +4255,20 @@ describe('BrowserWindow module', () => {
         w.setFullScreen(false);
         await leaveFullScreen;
         expect(w.isFullScreen()).to.be.false('isFullScreen');
+      });
+
+      it('multiple windows inherit correct fullscreen state', async () => {
+        const w = new BrowserWindow();
+        const enterFullScreen = emittedOnce(w, 'enter-full-screen');
+        w.setFullScreen(true);
+        await enterFullScreen;
+        expect(w.isFullScreen()).to.be.true('isFullScreen');
+        await delay();
+        const w2 = new BrowserWindow({ show: false });
+        const enterFullScreen2 = emittedOnce(w2, 'enter-full-screen');
+        w2.show();
+        await enterFullScreen2;
+        expect(w2.isFullScreen()).to.be.true('isFullScreen');
       });
     });
 
@@ -4610,6 +4674,34 @@ describe('BrowserWindow module', () => {
         await emittedOnce(w.webContents, 'paint');
         expect(w.webContents.frameRate).to.equal(30);
       });
+    });
+  });
+
+  describe('"transparent" option', () => {
+    afterEach(closeAllWindows);
+
+    // Only applicable on Windows where transparent windows can't be maximized.
+    ifit(process.platform === 'win32')('can show maximized frameless window', async () => {
+      const display = screen.getPrimaryDisplay();
+
+      const w = new BrowserWindow({
+        ...display.bounds,
+        frame: false,
+        transparent: true,
+        show: true
+      });
+
+      w.loadURL('about:blank');
+      await emittedOnce(w, 'ready-to-show');
+
+      expect(w.isMaximized()).to.be.true();
+
+      // Fails when the transparent HWND is in an invalid maximized state.
+      expect(w.getBounds()).to.deep.equal(display.workArea);
+
+      const newBounds = { width: 256, height: 256, x: 0, y: 0 };
+      w.setBounds(newBounds);
+      expect(w.getBounds()).to.deep.equal(newBounds);
     });
   });
 });

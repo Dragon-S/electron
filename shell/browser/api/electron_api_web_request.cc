@@ -129,7 +129,7 @@ v8::Local<v8::Value> HttpResponseHeadersToV8(
           !value.empty()) {
         net::HttpContentDisposition header(value, std::string());
         std::string decodedFilename =
-            header.is_attachment() ? " attachement" : " inline";
+            header.is_attachment() ? " attachment" : " inline";
         decodedFilename += "; filename=" + header.filename();
         value = decodedFilename;
       }
@@ -214,8 +214,11 @@ void ReadFromResponse(v8::Isolate* isolate,
 void ReadFromResponse(v8::Isolate* isolate,
                       gin::Dictionary* response,
                       net::HttpRequestHeaders* headers) {
-  headers->Clear();
-  response->Get("requestHeaders", headers);
+  v8::Local<v8::Value> value;
+  if (response->Get("requestHeaders", &value) && value->IsObject()) {
+    headers->Clear();
+    gin::Converter<net::HttpRequestHeaders>::FromV8(isolate, value, headers);
+  }
 }
 
 void ReadFromResponse(v8::Isolate* isolate,

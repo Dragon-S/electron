@@ -14,11 +14,13 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
+#include "chrome/browser/devtools/devtools_eye_dropper.h"
 #include "chrome/browser/devtools/devtools_file_system_indexer.h"
 #include "content/common/cursors/webcursor.h"
 #include "content/common/frame.mojom.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
+#include "content/public/browser/permission_type.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
@@ -89,6 +91,11 @@ class OffScreenWebContentsView;
 #endif
 
 namespace api {
+
+using DevicePermissionMap = std::map<
+    int,
+    std::map<content::PermissionType,
+             std::map<url::Origin, std::vector<std::unique_ptr<base::Value>>>>>;
 
 // Wrapper around the content::WebContents.
 class WebContents : public gin::Wrappable<WebContents>,
@@ -323,6 +330,7 @@ class WebContents : public gin::Wrappable<WebContents>,
 
   v8::Local<v8::Promise> TakeHeapSnapshot(v8::Isolate* isolate,
                                           const base::FilePath& file_path);
+  v8::Local<v8::Promise> GetProcessMemoryInfo(v8::Isolate* isolate);
 
   // Properties.
   int32_t ID() const { return id_; }
@@ -330,7 +338,6 @@ class WebContents : public gin::Wrappable<WebContents>,
   content::WebContents* HostWebContents() const;
   v8::Local<v8::Value> DevToolsWebContents(v8::Isolate* isolate);
   v8::Local<v8::Value> Debugger(v8::Isolate* isolate);
-  bool WasInitiallyShown();
   content::RenderFrameHost* MainFrame();
 
   WebContentsZoomController* GetZoomController() { return zoom_controller_; }
@@ -428,6 +435,21 @@ class WebContents : public gin::Wrappable<WebContents>,
   void SetTemporaryZoomLevel(double level);
   void DoGetZoomLevel(
       electron::mojom::ElectronBrowser::DoGetZoomLevelCallback callback);
+
+  // Grants |origin| access to |device|.
+  // To be used in place of ObjectPermissionContextBase::GrantObjectPermission.
+  void GrantDevicePermission(const url::Origin& origin,
+                             const base::Value* device,
+                             content::PermissionType permissionType,
+                             content::RenderFrameHost* render_frame_host);
+
+  // Returns the list of devices that |origin| has been granted permission to
+  // access. To be used in place of
+  // ObjectPermissionContextBase::GetGrantedObjects.
+  std::vector<base::Value> GetGrantedDevices(
+      const url::Origin& origin,
+      content::PermissionType permissionType,
+      content::RenderFrameHost* render_frame_host);
 
  private:
   // Does not manage lifetime of |web_contents|.
@@ -567,6 +589,8 @@ class WebContents : public gin::Wrappable<WebContents>,
       content::NavigationHandle* navigation_handle) override;
   void DidRedirectNavigation(
       content::NavigationHandle* navigation_handle) override;
+  void ReadyToCommitNavigation(
+      content::NavigationHandle* navigation_handle) override;
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
   bool OnMessageReceived(const IPC::Message& message) override;
@@ -664,6 +688,7 @@ class WebContents : public gin::Wrappable<WebContents>,
   void DevToolsSearchInPath(int request_id,
                             const std::string& file_system_path,
                             const std::string& query) override;
+  void DevToolsSetEyeDropperActive(bool active) override;
 
   // InspectableWebContentsViewDelegate:
 #if defined(TOOLKIT_VIEWS) && !defined(OS_MAC)
@@ -676,6 +701,8 @@ class WebContents : public gin::Wrappable<WebContents>,
 
   // Destroy the managed InspectableWebContents object.
   void ResetManagedWebContents(bool async);
+
+  void ColorPickedInEyeDropper(int r, int g, int b, int a);
 
   // DevTools index event callbacks.
   void OnDevToolsIndexingWorkCalculated(int request_id,
@@ -692,6 +719,8 @@ class WebContents : public gin::Wrappable<WebContents>,
 
   // Set fullscreen mode triggered by html api.
   void SetHtmlApiFullscreen(bool enter_fullscreen);
+  // Update the html fullscreen flag in both browser and renderer.
+  void UpdateHtmlApiFullscreen(bool fullscreen);
 
   v8::Global<v8::Value> session_;
   v8::Global<v8::Value> devtools_web_contents_;
@@ -730,8 +759,6 @@ class WebContents : public gin::Wrappable<WebContents>,
 
   v8::Global<v8::Value> pending_child_web_preferences_;
 
-  bool initially_shown_ = true;
-
   // The window that this WebContents belongs to.
   base::WeakPtr<NativeWindow> owner_window_;
 
@@ -747,6 +774,8 @@ class WebContents : public gin::Wrappable<WebContents>,
   std::unique_ptr<WebDialogHelper> web_dialog_helper_;
 
   scoped_refptr<DevToolsFileSystemIndexer> devtools_file_system_indexer_;
+
+  std::unique_ptr<DevToolsEyeDropper> eye_dropper_;
 
   ElectronBrowserContext* browser_context_;
 
@@ -776,6 +805,9 @@ class WebContents : public gin::Wrappable<WebContents>,
   content::RenderFrameHost* fullscreen_frame_ = nullptr;
 
   service_manager::BinderRegistryWithArgs<content::RenderFrameHost*> registry_;
+
+  // In-memory cache that holds objects that have been granted permissions.
+  DevicePermissionMap granted_devices_;
 
   base::WeakPtrFactory<WebContents> weak_factory_;
 

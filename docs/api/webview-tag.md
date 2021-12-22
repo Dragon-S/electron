@@ -5,7 +5,7 @@
 Electron's `webview` tag is based on [Chromium's `webview`][chrome-webview], which
 is undergoing dramatic architectural changes. This impacts the stability of `webviews`,
 including rendering, navigation, and event routing. We currently recommend to not
-use the `webview` tag and to consider alternatives, like `iframe`, Electron's `BrowserView`,
+use the `webview` tag and to consider alternatives, like `iframe`, [Electron's `BrowserView`](browser-view.md),
 or an architecture that avoids embedded content altogether.
 
 ## Enabling
@@ -515,8 +515,7 @@ Inserts `text` to the focused element.
 * `text` String - Content to be searched, must not be empty.
 * `options` Object (optional)
   * `forward` Boolean (optional) - Whether to search forward or backward, defaults to `true`.
-  * `findNext` Boolean (optional) - Whether the operation is first request or a follow up,
-    defaults to `false`.
+  * `findNext` Boolean (optional) - Whether to begin a new text finding session with this request. Should be `true` for initial requests, and `false` for follow-up requests. Defaults to `false`.
   * `matchCase` Boolean (optional) - Whether search should be case-sensitive,
     defaults to `false`.
 
@@ -719,6 +718,10 @@ Corresponds to the points in time when the spinner of the tab starts spinning.
 
 Corresponds to the points in time when the spinner of the tab stops spinning.
 
+### Event: 'did-attach'
+
+Fired when attached to the embedder web contents.
+
 ### Event: 'dom-ready'
 
 Fired when document in the given frame is loaded.
@@ -839,6 +842,19 @@ this purpose.
 
 Calling `event.preventDefault()` does __NOT__ have any effect.
 
+### Event: 'did-start-navigation'
+
+Returns:
+
+* `url` String
+* `isInPlace` Boolean
+* `isMainFrame` Boolean
+* `frameProcessId` Integer
+* `frameRoutingId` Integer
+
+Emitted when any frame (including main) starts navigating. `isInPlace` will be
+`true` for in-page navigations.
+
 ### Event: 'did-navigate'
 
 Returns:
@@ -846,6 +862,23 @@ Returns:
 * `url` String
 
 Emitted when a navigation is done.
+
+This event is not emitted for in-page navigations, such as clicking anchor links
+or updating the `window.location.hash`. Use `did-navigate-in-page` event for
+this purpose.
+
+### Event: 'did-frame-navigate'
+
+Returns:
+
+* `url` String
+* `httpResponseCode` Integer - -1 for non HTTP navigations
+* `httpStatusText` String - empty for non HTTP navigations,
+* `isMainFrame` Boolean
+* `frameProcessId` Integer
+* `frameRoutingId` Integer
+
+Emitted when any frame navigation is done.
 
 This event is not emitted for in-page navigations, such as clicking anchor links
 or updating the `window.location.hash`. Use `did-navigate-in-page` event for

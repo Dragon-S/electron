@@ -22,6 +22,7 @@
 #include "electron/buildflags/buildflags.h"
 #include "media/blink/multibuffer_data_source.h"
 #include "printing/buildflags/buildflags.h"
+#include "shell/browser/api/electron_api_protocol.h"
 #include "shell/common/color_util.h"
 #include "shell/common/gin_helper/dictionary.h"
 #include "shell/common/options_switches.h"
@@ -94,10 +95,18 @@ std::vector<std::string> ParseSchemesCLISwitch(base::CommandLine* command_line,
                            base::SPLIT_WANT_NONEMPTY);
 }
 
+// static
+RendererClientBase* g_renderer_client_base = nullptr;
+
 }  // namespace
 
 RendererClientBase::RendererClientBase() {
   auto* command_line = base::CommandLine::ForCurrentProcess();
+  // Parse --service-worker-schemes=scheme1,scheme2
+  std::vector<std::string> service_worker_schemes_list =
+      ParseSchemesCLISwitch(command_line, switches::kServiceWorkerSchemes);
+  for (const std::string& scheme : service_worker_schemes_list)
+    electron::api::AddServiceWorkerScheme(scheme);
   // Parse --standard-schemes=scheme1,scheme2
   std::vector<std::string> standard_schemes_list =
       ParseSchemesCLISwitch(command_line, switches::kStandardSchemes);
@@ -128,9 +137,13 @@ RendererClientBase::RendererClientBase() {
   DCHECK(command_line->HasSwitch(::switches::kRendererClientId));
   renderer_client_id_ =
       command_line->GetSwitchValueASCII(::switches::kRendererClientId);
+
+  g_renderer_client_base = this;
 }
 
-RendererClientBase::~RendererClientBase() = default;
+RendererClientBase::~RendererClientBase() {
+  g_renderer_client_base = nullptr;
+}
 
 void RendererClientBase::DidCreateScriptContext(
     v8::Handle<v8::Context> context,
@@ -146,6 +159,12 @@ void RendererClientBase::DidCreateScriptContext(
       render_frame->GetBlinkPreferences().enable_remote_module;
   global.SetHidden("enableRemoteModule", enableRemoteModule);
 #endif
+}
+
+// static
+RendererClientBase* RendererClientBase::Get() {
+  DCHECK(g_renderer_client_base);
+  return g_renderer_client_base;
 }
 
 void RendererClientBase::AddRenderBindings(

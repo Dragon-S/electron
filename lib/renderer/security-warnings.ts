@@ -271,7 +271,7 @@ const warnAboutAllowedPopups = function () {
 
 const warnAboutRemoteModuleWithRemoteContent = function (webPreferences?: Electron.WebPreferences) {
   if (!webPreferences || isLocalhost()) return;
-  const remoteModuleEnabled = webPreferences.enableRemoteModule != null ? !!webPreferences.enableRemoteModule : true;
+  const remoteModuleEnabled = webPreferences.enableRemoteModule != null ? !!webPreferences.enableRemoteModule : false;
   if (!remoteModuleEnabled) return;
 
   if (getIsRemoteProtocol()) {
@@ -298,7 +298,9 @@ const logSecurityWarnings = function (
   warnAboutEnableBlinkFeatures(webPreferences);
   warnAboutInsecureCSP();
   warnAboutAllowedPopups();
-  warnAboutRemoteModuleWithRemoteContent(webPreferences);
+  if (BUILDFLAG(ENABLE_REMOTE_MODULE)) {
+    warnAboutRemoteModuleWithRemoteContent(webPreferences);
+  }
 };
 
 const getWebPreferences = async function () {

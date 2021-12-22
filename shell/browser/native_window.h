@@ -135,6 +135,10 @@ class NativeWindow : public base::SupportsUserData,
   virtual void Invalidate() = 0;
   virtual void SetTitle(const std::string& title) = 0;
   virtual std::string GetTitle() = 0;
+#if defined(OS_MAC)
+  virtual void SetActive(bool is_key) = 0;
+  virtual bool IsActive() const = 0;
+#endif
 
   // Ability to augment the window title for the screen readers.
   void SetAccessibleTitle(const std::string& title);
@@ -199,9 +203,11 @@ class NativeWindow : public base::SupportsUserData,
 
   // Traffic Light API
 #if defined(OS_MAC)
+  virtual std::string GetAlwaysOnTopLevel() = 0;
   virtual void SetTrafficLightPosition(const gfx::Point& position) = 0;
   virtual gfx::Point GetTrafficLightPosition() const = 0;
   virtual void RedrawTrafficLights() = 0;
+  virtual void UpdateFrame() = 0;
 #endif
 
   // Touchbar API

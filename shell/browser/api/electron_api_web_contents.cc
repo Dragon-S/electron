@@ -74,6 +74,7 @@
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "ppapi/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
+#include "services/resource_coordinator/public/cpp/memory_instrumentation/memory_instrumentation.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "shell/browser/api/electron_api_browser_window.h"
 #include "shell/browser/api/electron_api_debugger.h"
@@ -99,7 +100,9 @@
 #include "shell/browser/web_contents_zoom_controller.h"
 #include "shell/browser/web_dialog_helper.h"
 #include "shell/browser/web_view_guest_delegate.h"
+#include "shell/browser/web_view_manager.h"
 #include "shell/common/api/electron_api_native_image.h"
+#include "shell/common/api/electron_bindings.h"
 #include "shell/common/color_util.h"
 #include "shell/common/electron_constants.h"
 #include "shell/common/gin_converters/base_converter.h"
@@ -696,8 +699,8 @@ WebContents::WebContents(v8::Isolate* isolate,
   // BrowserViews are not attached to a window initially so they should start
   // off as hidden. This is also important for compositor recycling. See:
   // https://github.com/electron/electron/pull/21372
-  initially_shown_ = type_ != Type::kBrowserView;
-  options.Get(options::kShow, &initially_shown_);
+  bool initially_shown = type_ != Type::kBrowserView;
+  options.Get(options::kShow, &initially_shown);
 
   // Obtain the session.
   std::string partition;
@@ -753,7 +756,7 @@ WebContents::WebContents(v8::Isolate* isolate,
 #endif
   } else {
     content::WebContents::CreateParams params(session->browser_context());
-    params.initially_hidden = !initially_shown_;
+    params.initially_hidden = !initially_shown;
     web_contents = content::WebContents::Create(params);
   }
 
@@ -905,6 +908,12 @@ void WebContents::InitWithWebContents(content::WebContents* web_contents,
 }
 
 WebContents::~WebContents() {
+  // clear out objects that have been granted permissions so that when
+  // WebContents::RenderFrameDeleted is called as a result of WebContents
+  // destruction it doesn't try to clear out a granted_devices_
+  // on a destructed object.
+  granted_devices_.clear();
+
   MarkDestroyed();
   // The destroy() is called.
   if (inspectable_web_contents_) {
@@ -1229,31 +1238,29 @@ void WebContents::OnEnterFullscreenModeForTab(
     content::RenderFrameHost* requesting_frame,
     const blink::mojom::FullscreenOptions& options,
     bool allowed) {
-  if (!allowed)
+  if (!allowed || !owner_window_)
     return;
-  if (!owner_window_)
-    return;
+
   auto* source = content::WebContents::FromRenderFrameHost(requesting_frame);
   if (IsFullscreenForTabOrPending(source)) {
     DCHECK_EQ(fullscreen_frame_, source->GetFocusedFrame());
     return;
   }
+
   SetHtmlApiFullscreen(true);
-  owner_window_->NotifyWindowEnterHtmlFullScreen();
 
   if (native_fullscreen_) {
     // Explicitly trigger a view resize, as the size is not actually changing if
     // the browser is fullscreened, too.
     source->GetRenderViewHost()->GetWidget()->SynchronizeVisualProperties();
   }
-  Emit("enter-html-full-screen");
 }
 
 void WebContents::ExitFullscreenModeForTab(content::WebContents* source) {
   if (!owner_window_)
     return;
+
   SetHtmlApiFullscreen(false);
-  owner_window_->NotifyWindowLeaveHtmlFullScreen();
 
   if (native_fullscreen_) {
     // Explicitly trigger a view resize, as the size is not actually changing if
@@ -1261,7 +1268,6 @@ void WebContents::ExitFullscreenModeForTab(content::WebContents* source) {
     // `chrome/browser/ui/exclusive_access/fullscreen_controller.cc`.
     source->GetRenderViewHost()->GetWidget()->SynchronizeVisualProperties();
   }
-  Emit("leave-html-full-screen");
 }
 
 void WebContents::RendererUnresponsive(
@@ -1640,6 +1646,11 @@ void WebContents::UpdateDraggableRegions(
 
 void WebContents::RenderFrameDeleted(
     content::RenderFrameHost* render_frame_host) {
+  // clear out objects that have been granted permissions
+  if (!granted_devices_.empty()) {
+    granted_devices_.erase(render_frame_host->GetFrameTreeNodeId());
+  }
+
   // A WebFrameMain can outlive its RenderFrameHost so we need to mark it as
   // disposed to prevent access to it.
   WebFrameMain::RenderFrameDeleted(render_frame_host);
@@ -1653,6 +1664,27 @@ void WebContents::DidStartNavigation(
 void WebContents::DidRedirectNavigation(
     content::NavigationHandle* navigation_handle) {
   EmitNavigationEvent("did-redirect-navigation", navigation_handle);
+}
+
+void WebContents::ReadyToCommitNavigation(
+    content::NavigationHandle* navigation_handle) {
+  // Don't focus content in an inactive window.
+  if (!owner_window())
+    return;
+#if defined(OS_MAC)
+  if (!owner_window()->IsActive())
+    return;
+#else
+  if (!owner_window()->widget()->IsActive())
+    return;
+#endif
+  // Don't focus content after subframe navigations.
+  if (!navigation_handle->IsInMainFrame())
+    return;
+  // Only focus for top-level contents.
+  if (type_ != Type::kBrowserWindow)
+    return;
+  web_contents()->SetInitialFocus();
 }
 
 void WebContents::DidFinishNavigation(
@@ -1719,6 +1751,8 @@ void WebContents::TitleWasSet(content::NavigationEntry* entry) {
     } else {
       final_title = title;
     }
+  } else {
+    final_title = web_contents()->GetTitle();
   }
   for (ExtendedWebContentsObserver& observer : observers_)
     observer.OnPageTitleUpdated(final_title, explicit_set);
@@ -3101,10 +3135,6 @@ v8::Local<v8::Value> WebContents::Debugger(v8::Isolate* isolate) {
   return v8::Local<v8::Value>::New(isolate, debugger_);
 }
 
-bool WebContents::WasInitiallyShown() {
-  return initially_shown_;
-}
-
 content::RenderFrameHost* WebContents::MainFrame() {
   return web_contents()->GetMainFrame();
 }
@@ -3120,6 +3150,26 @@ void WebContents::NotifyUserActivation() {
   if (frame)
     frame->NotifyUserActivation(
         blink::mojom::UserActivationNotificationType::kInteraction);
+}
+
+v8::Local<v8::Promise> WebContents::GetProcessMemoryInfo(v8::Isolate* isolate) {
+  gin_helper::Promise<gin_helper::Dictionary> promise(isolate);
+  v8::Local<v8::Promise> handle = promise.GetHandle();
+
+  auto* frame_host = web_contents()->GetMainFrame();
+  if (!frame_host) {
+    promise.RejectWithErrorMessage("Failed to create memory dump");
+    return handle;
+  }
+
+  auto pid = frame_host->GetProcess()->GetProcess().Pid();
+  v8::Global<v8::Context> context(isolate, isolate->GetCurrentContext());
+  memory_instrumentation::MemoryInstrumentation::GetInstance()
+      ->RequestGlobalDumpForPid(
+          pid, std::vector<std::string>(),
+          base::BindOnce(&ElectronBindings::DidReceiveMemoryDump,
+                         std::move(context), std::move(promise), pid));
+  return handle;
 }
 
 v8::Local<v8::Promise> WebContents::TakeHeapSnapshot(
@@ -3168,6 +3218,42 @@ v8::Local<v8::Promise> WebContents::TakeHeapSnapshot(
           },
           base::Owned(std::move(electron_renderer)), std::move(promise)));
   return handle;
+}
+
+void WebContents::GrantDevicePermission(
+    const url::Origin& origin,
+    const base::Value* device,
+    content::PermissionType permissionType,
+    content::RenderFrameHost* render_frame_host) {
+  granted_devices_[render_frame_host->GetFrameTreeNodeId()][permissionType]
+                  [origin]
+                      .push_back(
+                          std::make_unique<base::Value>(device->Clone()));
+}
+
+std::vector<base::Value> WebContents::GetGrantedDevices(
+    const url::Origin& origin,
+    content::PermissionType permissionType,
+    content::RenderFrameHost* render_frame_host) {
+  const auto& devices_for_frame_host_it =
+      granted_devices_.find(render_frame_host->GetFrameTreeNodeId());
+  if (devices_for_frame_host_it == granted_devices_.end())
+    return {};
+
+  const auto& current_devices_it =
+      devices_for_frame_host_it->second.find(permissionType);
+  if (current_devices_it == devices_for_frame_host_it->second.end())
+    return {};
+
+  const auto& origin_devices_it = current_devices_it->second.find(origin);
+  if (origin_devices_it == current_devices_it->second.end())
+    return {};
+
+  std::vector<base::Value> results;
+  for (const auto& object : origin_devices_it->second)
+    results.push_back(object->Clone());
+
+  return results;
 }
 
 void WebContents::UpdatePreferredSize(content::WebContents* web_contents,
@@ -3447,6 +3533,30 @@ void WebContents::DevToolsSearchInPath(int request_id,
                           file_system_path));
 }
 
+void WebContents::DevToolsSetEyeDropperActive(bool active) {
+  auto* web_contents = GetWebContents();
+  if (!web_contents)
+    return;
+
+  if (active) {
+    eye_dropper_ = std::make_unique<DevToolsEyeDropper>(
+        web_contents, base::BindRepeating(&WebContents::ColorPickedInEyeDropper,
+                                          base::Unretained(this)));
+  } else {
+    eye_dropper_.reset();
+  }
+}
+
+void WebContents::ColorPickedInEyeDropper(int r, int g, int b, int a) {
+  base::DictionaryValue color;
+  color.SetInteger("r", r);
+  color.SetInteger("g", g);
+  color.SetInteger("b", b);
+  color.SetInteger("a", a);
+  inspectable_web_contents_->CallClientFunction(
+      "DevToolsAPI.eyeDropperPickedColor", &color, nullptr, nullptr);
+}
+
 #if defined(TOOLKIT_VIEWS) && !defined(OS_MAC)
 gfx::ImageSkia WebContents::GetDevToolsWindowIcon() {
   if (!owner_window())
@@ -3515,13 +3625,13 @@ void WebContents::SetHtmlApiFullscreen(bool enter_fullscreen) {
   // Window is already in fullscreen mode, save the state.
   if (enter_fullscreen && owner_window_->IsFullscreen()) {
     native_fullscreen_ = true;
-    html_fullscreen_ = true;
+    UpdateHtmlApiFullscreen(true);
     return;
   }
 
   // Exit html fullscreen state but not window's fullscreen mode.
   if (!enter_fullscreen && native_fullscreen_) {
-    html_fullscreen_ = false;
+    UpdateHtmlApiFullscreen(false);
     return;
   }
 
@@ -3536,8 +3646,45 @@ void WebContents::SetHtmlApiFullscreen(bool enter_fullscreen) {
     owner_window_->SetFullScreen(enter_fullscreen);
   }
 
-  html_fullscreen_ = enter_fullscreen;
+  UpdateHtmlApiFullscreen(enter_fullscreen);
   native_fullscreen_ = false;
+}
+
+void WebContents::UpdateHtmlApiFullscreen(bool fullscreen) {
+  if (fullscreen == is_html_fullscreen())
+    return;
+
+  html_fullscreen_ = fullscreen;
+
+  // Notify renderer of the html fullscreen change.
+  web_contents()
+      ->GetRenderViewHost()
+      ->GetWidget()
+      ->SynchronizeVisualProperties();
+
+  // The embedder WebContents is separated from the frame tree of webview, so
+  // we must manually sync their fullscreen states.
+  if (embedder_)
+    embedder_->SetHtmlApiFullscreen(fullscreen);
+
+  if (fullscreen) {
+    Emit("enter-html-full-screen");
+    owner_window_->NotifyWindowEnterHtmlFullScreen();
+  } else {
+    Emit("leave-html-full-screen");
+    owner_window_->NotifyWindowLeaveHtmlFullScreen();
+  }
+
+  // Make sure all child webviews quit html fullscreen.
+  if (!fullscreen && !IsGuest()) {
+    auto* manager = WebViewManager::GetWebViewManager(web_contents());
+    manager->ForEachGuest(
+        web_contents(), base::BindRepeating([](content::WebContents* guest) {
+          WebContents* api_web_contents = WebContents::From(guest);
+          api_web_contents->SetHtmlApiFullscreen(false);
+          return false;
+        }));
+  }
 }
 
 // static
@@ -3667,12 +3814,12 @@ v8::Local<v8::ObjectTemplate> WebContents::FillObjectTemplate(
                  &WebContents::GetWebRTCIPHandlingPolicy)
       .SetMethod("_grantOriginAccess", &WebContents::GrantOriginAccess)
       .SetMethod("takeHeapSnapshot", &WebContents::TakeHeapSnapshot)
+      .SetMethod("_getProcessMemoryInfo", &WebContents::GetProcessMemoryInfo)
       .SetProperty("id", &WebContents::ID)
       .SetProperty("session", &WebContents::Session)
       .SetProperty("hostWebContents", &WebContents::HostWebContents)
       .SetProperty("devToolsWebContents", &WebContents::DevToolsWebContents)
       .SetProperty("debugger", &WebContents::Debugger)
-      .SetProperty("_initiallyShown", &WebContents::WasInitiallyShown)
       .SetProperty("mainFrame", &WebContents::MainFrame)
       .Build();
 }
@@ -3778,6 +3925,16 @@ gin::Handle<WebContents> WebContentsFromID(v8::Isolate* isolate, int32_t id) {
                   : gin::Handle<WebContents>();
 }
 
+gin::Handle<WebContents> WebContentsFromDevToolsTargetID(
+    v8::Isolate* isolate,
+    std::string target_id) {
+  auto agent_host = content::DevToolsAgentHost::GetForId(target_id);
+  WebContents* contents =
+      agent_host ? WebContents::From(agent_host->GetWebContents()) : nullptr;
+  return contents ? gin::CreateHandle(isolate, contents)
+                  : gin::Handle<WebContents>();
+}
+
 std::vector<gin::Handle<WebContents>> GetAllWebContentsAsV8(
     v8::Isolate* isolate) {
   std::vector<gin::Handle<WebContents>> list;
@@ -3796,6 +3953,7 @@ void Initialize(v8::Local<v8::Object> exports,
   gin_helper::Dictionary dict(isolate, exports);
   dict.Set("WebContents", WebContents::GetConstructor(context));
   dict.SetMethod("fromId", &WebContentsFromID);
+  dict.SetMethod("fromDevToolsTargetId", &WebContentsFromDevToolsTargetID);
   dict.SetMethod("getAllWebContents", &GetAllWebContentsAsV8);
 }
 

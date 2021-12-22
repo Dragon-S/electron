@@ -301,6 +301,7 @@ void BrowserWindow::OnWindowIsKeyChanged(bool is_key) {
   auto* rwhv = web_contents()->GetRenderWidgetHostView();
   if (rwhv)
     rwhv->SetActive(is_key);
+  window()->SetActive(is_key);
 #endif
 }
 
@@ -391,6 +392,10 @@ void BrowserWindow::ResetBrowserViews() {
 #if defined(OS_MAC)
   UpdateDraggableRegions(draggable_regions_);
 #endif
+}
+
+void BrowserWindow::OnDevToolsResized() {
+  UpdateDraggableRegions(draggable_regions_);
 }
 
 void BrowserWindow::SetVibrancy(v8::Isolate* isolate,
