@@ -5,8 +5,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as qs from 'querystring';
 import * as http from 'http';
+import * as semver from 'semver';
 import { AddressInfo } from 'net';
-import { app, BrowserWindow, BrowserView, ipcMain, OnBeforeSendHeadersListenerDetails, protocol, screen, webContents, session, WebContents, BrowserWindowConstructorOptions } from 'electron/main';
+import { app, BrowserWindow, BrowserView, dialog, ipcMain, OnBeforeSendHeadersListenerDetails, protocol, screen, webContents, session, WebContents, BrowserWindowConstructorOptions } from 'electron/main';
 
 import { emittedOnce, emittedUntil, emittedNTimes } from './events-helpers';
 import { ifit, ifdescribe, defer, delay } from './spec-helpers';
@@ -100,6 +101,13 @@ describe('BrowserWindow module', () => {
     afterEach(async () => {
       await closeWindow(w);
       w = null as unknown as BrowserWindow;
+    });
+
+    it('should work if called when a messageBox is showing', async () => {
+      const closed = emittedOnce(w, 'closed');
+      dialog.showMessageBox(w, { message: 'Hello Error' });
+      w.close();
+      await closed;
     });
 
     it('should emit unload handler', async () => {
@@ -1093,6 +1101,24 @@ describe('BrowserWindow module', () => {
           await unmaximize;
           expect(w.isMaximized()).to.equal(false);
         });
+        it('returns the correct value for windows with an aspect ratio', async () => {
+          w.destroy();
+          w = new BrowserWindow({
+            show: false,
+            fullscreenable: false
+          });
+
+          w.setAspectRatio(16 / 11);
+
+          const maximize = emittedOnce(w, 'resize');
+          w.show();
+          w.maximize();
+          await maximize;
+
+          expect(w.isMaximized()).to.equal(true);
+          w.resizable = false;
+          expect(w.isMaximized()).to.equal(true);
+        });
       });
 
       ifdescribe(process.platform !== 'linux')('Minimized state', () => {
@@ -1411,13 +1437,10 @@ describe('BrowserWindow module', () => {
   describe('BrowserWindow.setAlwaysOnTop(flag, level)', () => {
     let w = null as unknown as BrowserWindow;
 
+    afterEach(closeAllWindows);
+
     beforeEach(() => {
       w = new BrowserWindow({ show: true });
-    });
-
-    afterEach(async () => {
-      await closeWindow(w);
-      w = null as unknown as BrowserWindow;
     });
 
     it('sets the window as always on top', () => {
@@ -1446,6 +1469,16 @@ describe('BrowserWindow module', () => {
       w.setAlwaysOnTop(true);
       const [, alwaysOnTop] = await alwaysOnTopChanged;
       expect(alwaysOnTop).to.be.true('is not alwaysOnTop');
+    });
+
+    ifit(process.platform === 'darwin')('honors the alwaysOnTop level of a child window', () => {
+      w = new BrowserWindow({ show: false });
+      const c = new BrowserWindow({ parent: w });
+      c.setAlwaysOnTop(true, 'screen-saver');
+
+      expect(w.isAlwaysOnTop()).to.be.false();
+      expect(c.isAlwaysOnTop()).to.be.true('child is not always on top');
+      expect((c as any)._getAlwaysOnTopLevel()).to.equal('screen-saver');
     });
   });
 
@@ -1567,13 +1600,14 @@ describe('BrowserWindow module', () => {
       expect(w._getWindowButtonVisibility()).to.equal(true);
     });
 
-    it('changes window button visibility for customButtonsOnHover window', () => {
+    // Buttons of customButtonsOnHover are always hidden unless hovered.
+    it('does not change window button visibility for customButtonsOnHover window', () => {
       const w = new BrowserWindow({ show: false, frame: false, titleBarStyle: 'customButtonsOnHover' });
-      expect(w._getWindowButtonVisibility()).to.equal(true);
-      w.setWindowButtonVisibility(false);
       expect(w._getWindowButtonVisibility()).to.equal(false);
       w.setWindowButtonVisibility(true);
-      expect(w._getWindowButtonVisibility()).to.equal(true);
+      expect(w._getWindowButtonVisibility()).to.equal(false);
+      w.setWindowButtonVisibility(false);
+      expect(w._getWindowButtonVisibility()).to.equal(false);
     });
   });
 
@@ -1588,6 +1622,13 @@ describe('BrowserWindow module', () => {
         w.setVibrancy(null);
         w.setVibrancy('ultra-dark');
         w.setVibrancy('' as any);
+      }).to.not.throw();
+    });
+
+    it('does not crash if vibrancy is set to an invalid value', () => {
+      const w = new BrowserWindow({ show: false });
+      expect(() => {
+        w.setVibrancy('i-am-not-a-valid-vibrancy-type' as any);
       }).to.not.throw();
     });
   });
@@ -1842,8 +1883,47 @@ describe('BrowserWindow module', () => {
     });
   });
 
-  ifdescribe(process.platform === 'darwin' && parseInt(os.release().split('.')[0]) >= 14)('"titleBarStyle" option', () => {
+  ifdescribe(process.platform === 'win32' || (process.platform === 'darwin' && semver.gte(os.release(), '14.0.0')))('"titleBarStyle" option', () => {
+    const testWindowsOverlay = async (style: any) => {
+      const w = new BrowserWindow({
+        show: false,
+        width: 400,
+        height: 400,
+        titleBarStyle: style,
+        webPreferences: {
+          nodeIntegration: true,
+          contextIsolation: false
+        },
+        titleBarOverlay: true
+      });
+      const overlayHTML = path.join(__dirname, 'fixtures', 'pages', 'overlay.html');
+      if (process.platform === 'darwin') {
+        await w.loadFile(overlayHTML);
+      } else {
+        const overlayReady = emittedOnce(ipcMain, 'geometrychange');
+        await w.loadFile(overlayHTML);
+        await overlayReady;
+      }
+      const overlayEnabled = await w.webContents.executeJavaScript('navigator.windowControlsOverlay.visible');
+      expect(overlayEnabled).to.be.true('overlayEnabled');
+      const overlayRect = await w.webContents.executeJavaScript('getJSOverlayProperties()');
+      expect(overlayRect.y).to.equal(0);
+      if (process.platform === 'darwin') {
+        expect(overlayRect.x).to.be.greaterThan(0);
+      } else {
+        expect(overlayRect.x).to.equal(0);
+      }
+      expect(overlayRect.width).to.be.greaterThan(0);
+      expect(overlayRect.height).to.be.greaterThan(0);
+      const cssOverlayRect = await w.webContents.executeJavaScript('getCssOverlayProperties();');
+      expect(cssOverlayRect).to.deep.equal(overlayRect);
+      const geometryChange = emittedOnce(ipcMain, 'geometrychange');
+      w.setBounds({ width: 800 });
+      const [, newOverlayRect] = await geometryChange;
+      expect(newOverlayRect.width).to.equal(overlayRect.width + 400);
+    };
     afterEach(closeAllWindows);
+    afterEach(() => { ipcMain.removeAllListeners('geometrychange'); });
     it('creates browser window with hidden title bar', () => {
       const w = new BrowserWindow({
         show: false,
@@ -1854,7 +1934,7 @@ describe('BrowserWindow module', () => {
       const contentSize = w.getContentSize();
       expect(contentSize).to.deep.equal([400, 400]);
     });
-    it('creates browser window with hidden inset title bar', () => {
+    ifit(process.platform === 'darwin')('creates browser window with hidden inset title bar', () => {
       const w = new BrowserWindow({
         show: false,
         width: 400,
@@ -1863,6 +1943,12 @@ describe('BrowserWindow module', () => {
       });
       const contentSize = w.getContentSize();
       expect(contentSize).to.deep.equal([400, 400]);
+    });
+    it('sets Window Control Overlay with hidden title bar', async () => {
+      await testWindowsOverlay('hidden');
+    });
+    ifit(process.platform === 'darwin')('sets Window Control Overlay with hidden inset title bar', async () => {
+      await testWindowsOverlay('hiddenInset');
     });
   });
 
@@ -3242,7 +3328,7 @@ describe('BrowserWindow module', () => {
       expect(additionalFeatures).to.deep.equal([]);
       expect(postBody.data).to.have.length(1);
       expect(postBody.data[0].type).to.equal('rawData');
-      expect(postBody.data[0].bytes).to.deep.equal(Buffer.from('post-test-key=post-test-value'));
+      expect((postBody.data[0] as any).bytes).to.deep.equal(Buffer.from('post-test-key=post-test-value'));
       expect(postBody.contentType).to.equal('application/x-www-form-urlencoded');
     });
   });
@@ -3542,7 +3628,7 @@ describe('BrowserWindow module', () => {
         const w = new BrowserWindow({ show: false });
         const c = new BrowserWindow({ show: false, parent: w });
         expect(c.isVisible()).to.be.false('child is visible');
-        expect(c.getParentWindow().isVisible()).to.be.false('parent is visible');
+        expect(c.getParentWindow()!.isVisible()).to.be.false('parent is visible');
       });
     });
 
@@ -4290,6 +4376,20 @@ describe('BrowserWindow module', () => {
         await leaveFullScreen;
         expect(w.isFullScreen()).to.be.false('isFullScreen');
       });
+
+      ifit(process.arch === 'x64')('multiple windows inherit correct fullscreen state', async () => {
+        const w = new BrowserWindow();
+        const enterFullScreen = emittedOnce(w, 'enter-full-screen');
+        w.setFullScreen(true);
+        await enterFullScreen;
+        expect(w.isFullScreen()).to.be.true('isFullScreen');
+        await delay();
+        const w2 = new BrowserWindow({ show: false });
+        const enterFullScreen2 = emittedOnce(w2, 'enter-full-screen');
+        w2.show();
+        await enterFullScreen2;
+        expect(w2.isFullScreen()).to.be.true('isFullScreen');
+      });
     });
 
     describe('closable state', () => {
@@ -4707,6 +4807,34 @@ describe('BrowserWindow module', () => {
         await emittedOnce(w.webContents, 'paint');
         expect(w.webContents.frameRate).to.equal(30);
       });
+    });
+  });
+
+  describe('"transparent" option', () => {
+    afterEach(closeAllWindows);
+
+    // Only applicable on Windows where transparent windows can't be maximized.
+    ifit(process.platform === 'win32')('can show maximized frameless window', async () => {
+      const display = screen.getPrimaryDisplay();
+
+      const w = new BrowserWindow({
+        ...display.bounds,
+        frame: false,
+        transparent: true,
+        show: true
+      });
+
+      w.loadURL('about:blank');
+      await emittedOnce(w, 'ready-to-show');
+
+      expect(w.isMaximized()).to.be.true();
+
+      // Fails when the transparent HWND is in an invalid maximized state.
+      expect(w.getBounds()).to.deep.equal(display.workArea);
+
+      const newBounds = { width: 256, height: 256, x: 0, y: 0 };
+      w.setBounds(newBounds);
+      expect(w.getBounds()).to.deep.equal(newBounds);
     });
   });
 });

@@ -845,10 +845,10 @@ void BaseWindow::SetVisibleOnAllWorkspaces(bool visible,
   gin_helper::Dictionary options;
   bool visibleOnFullScreen = false;
   bool skipTransformProcessType = false;
-  args->GetNext(&options) &&
-      options.Get("visibleOnFullScreen", &visibleOnFullScreen);
-  args->GetNext(&options) &&
-      options.Get("skipTransformProcessType", &skipTransformProcessType);
+  if (args->GetNext(&options)) {
+    options.Get("visibleOnFullScreen", &visibleOnFullScreen);
+    options.Get("skipTransformProcessType", &skipTransformProcessType);
+  }
   return window_->SetVisibleOnAllWorkspaces(visible, visibleOnFullScreen,
                                             skipTransformProcessType);
 }
@@ -867,6 +867,10 @@ void BaseWindow::SetVibrancy(v8::Isolate* isolate, v8::Local<v8::Value> value) {
 }
 
 #if defined(OS_MAC)
+std::string BaseWindow::GetAlwaysOnTopLevel() {
+  return window_->GetAlwaysOnTopLevel();
+}
+
 void BaseWindow::SetWindowButtonVisibility(bool visible) {
   window_->SetWindowButtonVisibility(visible);
 }
@@ -1253,6 +1257,7 @@ void BaseWindow::BuildPrototype(v8::Isolate* isolate,
       .SetMethod("isVisibleOnAllWorkspaces",
                  &BaseWindow::IsVisibleOnAllWorkspaces)
 #if defined(OS_MAC)
+      .SetMethod("_getAlwaysOnTopLevel", &BaseWindow::GetAlwaysOnTopLevel)
       .SetMethod("setAutoHideCursor", &BaseWindow::SetAutoHideCursor)
 #endif
       .SetMethod("setVibrancy", &BaseWindow::SetVibrancy)

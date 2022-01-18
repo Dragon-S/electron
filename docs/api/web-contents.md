@@ -45,6 +45,26 @@ returns `null`.
 Returns `WebContents` | undefined - A WebContents instance with the given ID, or
 `undefined` if there is no WebContents associated with the given ID.
 
+### `webContents.fromDevToolsTargetId(targetId)`
+
+* `targetId` String - The Chrome DevTools Protocol [TargetID](https://chromedevtools.github.io/devtools-protocol/tot/Target/#type-TargetID) associated with the WebContents instance.
+
+Returns `WebContents` | undefined - A WebContents instance with the given TargetID, or
+`undefined` if there is no WebContents associated with the given TargetID.
+
+When communicating with the [Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/),
+it can be useful to lookup a WebContents instance based on its assigned TargetID.
+
+```js
+async function lookupTargetId (browserWindow) {
+  const wc = browserWindow.webContents
+  await wc.debugger.attach('1.3')
+  const { targetInfo } = await wc.debugger.sendCommand('Target.getTargetInfo')
+  const { targetId } = targetInfo
+  const targetWebContents = await webContents.fromDevToolsTargetId(targetId)
+}
+```
+
 ## Class: WebContents
 
 > Render and control the contents of a BrowserWindow instance.
@@ -710,6 +730,8 @@ first available device will be selected. `callback` should be called with
 `deviceId` to be selected, passing empty string to `callback` will
 cancel the request.
 
+If no event listener is added for this event, all bluetooth requests will be cancelled.
+
 ```javascript
 const { app, BrowserWindow } = require('electron')
 
@@ -914,7 +936,7 @@ in `webPreferences`.
   * `httpReferrer` (String | [Referrer](structures/referrer.md)) (optional) - An HTTP Referrer url.
   * `userAgent` String (optional) - A user agent originating the request.
   * `extraHeaders` String (optional) - Extra headers separated by "\n".
-  * `postData` ([UploadRawData[]](structures/upload-raw-data.md) | [UploadFile[]](structures/upload-file.md)) (optional)
+  * `postData` ([UploadRawData](structures/upload-raw-data.md) | [UploadFile](structures/upload-file.md))[] (optional)
   * `baseURLForDataURL` String (optional) - Base url (with trailing path separator) for files to be loaded by the data url. This is needed only if the specified `url` is a data url and needs to load other files.
 
 Returns `Promise<void>` - the promise will resolve when the page has finished loading
@@ -1184,6 +1206,15 @@ Ignore application menu shortcuts while this web contents is focused.
     * `url` String - The _resolved_ version of the URL passed to `window.open()`. e.g. opening a window with `window.open('foo')` will yield something like `https://the-origin/the/current/path/foo`.
     * `frameName` String - Name of the window provided in `window.open()`
     * `features` String - Comma separated list of window features provided to `window.open()`.
+    * `disposition` String - Can be `default`, `foreground-tab`, `background-tab`,
+      `new-window`, `save-to-disk` or `other`.
+    * `referrer` [Referrer](structures/referrer.md) - The referrer that will be
+      passed to the new window. May or may not result in the `Referer` header being
+      sent, depending on the referrer policy.
+    * `postBody` [PostBody](structures/post-body.md) (optional) - The post data that
+      will be sent to the new window, along with the appropriate headers that will
+      be set. If no post data is to be sent, the value will be `null`. Only defined
+      when the window is being created by a form that set `target=_blank`.
 
   Returns `{action: 'deny'} | {action: 'allow', overrideBrowserWindowOptions?: BrowserWindowConstructorOptions}` - `deny` cancels the creation of the new
   window. `allow` will allow the new window to be created. Specifying `overrideBrowserWindowOptions` allows customization of the created window.
@@ -1321,8 +1352,7 @@ Inserts `text` to the focused element.
 * `text` String - Content to be searched, must not be empty.
 * `options` Object (optional)
   * `forward` Boolean (optional) - Whether to search forward or backward, defaults to `true`.
-  * `findNext` Boolean (optional) - Whether the operation is first request or a follow up,
-    defaults to `false`.
+  * `findNext` Boolean (optional) - Whether to begin a new text finding session with this request. Should be `true` for initial requests, and `false` for follow-up requests. Defaults to `false`.
   * `matchCase` Boolean (optional) - Whether search should be case-sensitive,
     defaults to `false`.
 
@@ -1364,19 +1394,21 @@ Captures a snapshot of the page within `rect`. Omitting `rect` will capture the 
 Returns `Boolean` - Whether this page is being captured. It returns true when the capturer count
 is large then 0.
 
-#### `contents.incrementCapturerCount([size, stayHidden])`
+#### `contents.incrementCapturerCount([size, stayHidden, stayAwake])`
 
 * `size` [Size](structures/size.md) (optional) - The preferred size for the capturer.
 * `stayHidden` Boolean (optional) -  Keep the page hidden instead of visible.
+* `stayAwake` Boolean (optional) -  Keep the system awake instead of allowing it to sleep.
 
 Increase the capturer count by one. The page is considered visible when its browser window is
 hidden and the capturer count is non-zero. If you would like the page to stay hidden, you should ensure that `stayHidden` is set to true.
 
 This also affects the Page Visibility API.
 
-#### `contents.decrementCapturerCount([stayHidden])`
+#### `contents.decrementCapturerCount([stayHidden, stayAwake])`
 
 * `stayHidden` Boolean (optional) -  Keep the page in hidden state instead of visible.
+* `stayAwake` Boolean (optional) -  Keep the system awake instead of allowing it to sleep.
 
 Decrease the capturer count by one. The page will be set to hidden or occluded state when its
 browser window is hidden or occluded and the capturer count reaches zero. If you want to

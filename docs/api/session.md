@@ -506,6 +506,7 @@ win.webContents.session.setCertificateVerifyProc((request, callback) => {
     * `permissionGranted` Boolean - Allow or deny the permission.
   * `details` Object - Some properties are only available on certain permission types.
     * `externalURL` String (optional) - The url of the `openExternal` request.
+    * `securityOrigin` String (optional) - The security origin of the `media` request.
     * `mediaTypes` String[] (optional) - The types of media access being requested, elements can be `video`
       or `audio`
     * `requestingUrl` String - The last URL the requesting frame loaded
@@ -531,7 +532,7 @@ session.fromPartition('some-partition').setPermissionRequestHandler((webContents
 #### `ses.setPermissionCheckHandler(handler)`
 
 * `handler` Function\<Boolean> | null
-  * `webContents` ([WebContents](web-contents.md) | null) - WebContents checking the permission.  Please note that if the request comes from a subframe you should use `requestingUrl` to check the request origin.  Cross origin sub frames making permission checks will pass a `null` webContents to this handler.  You should use `embeddingOrigin` and `requestingOrigin` to determine what origin the owning frame and the requesting frame are on respectively.
+  * `webContents` ([WebContents](web-contents.md) | null) - WebContents checking the permission.  Please note that if the request comes from a subframe you should use `requestingUrl` to check the request origin.  All cross origin sub frames making permission checks will pass a `null` webContents to this handler, while certain other permission checks such as `notifications` checks will always pass `null`.  You should use `embeddingOrigin` and `requestingOrigin` to determine what origin the owning frame and the requesting frame are on respectively.
   * `permission` String - Type of permission check.  Valid values are `midiSysex`, `notifications`, `geolocation`, `media`,`mediaKeySystem`,`midi`, `pointerLock`, `fullscreen`, `openExternal`, or `serial`.
   * `requestingOrigin` String - The origin URL of the permission check
   * `details` Object - Some properties are only available on certain permission types.
@@ -822,6 +823,11 @@ Returns `Extension[]` - A list of all loaded extensions.
 **Note:** This API cannot be called before the `ready` event of the `app` module
 is emitted.
 
+#### `ses.getStoragePath()`
+
+A `String | null` indicating the absolute file system path where data for this
+session is persisted on disk.  For in memory sessions this returns `null`.
+
 ### Instance Properties
 
 The following properties are available on instances of `Session`:
@@ -834,6 +840,11 @@ code to the `setSpellCheckerLanguages` API that isn't in this array will result 
 #### `ses.spellCheckerEnabled`
 
 A `Boolean` indicating whether builtin spell checker is enabled.
+
+#### `ses.storagePath` _Readonly_
+
+A `String | null` indicating the absolute file system path where data for this
+session is persisted on disk.  For in memory sessions this returns `null`.
 
 #### `ses.cookies` _Readonly_
 

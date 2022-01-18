@@ -47,6 +47,24 @@ describe('webContents module', () => {
     });
   });
 
+  describe('fromDevToolsTargetId()', () => {
+    it('returns WebContents for attached DevTools target', async () => {
+      const w = new BrowserWindow({ show: false });
+      await w.loadURL('about:blank');
+      try {
+        await w.webContents.debugger.attach('1.3');
+        const { targetInfo } = await w.webContents.debugger.sendCommand('Target.getTargetInfo');
+        expect(webContents.fromDevToolsTargetId(targetInfo.targetId)).to.equal(w.webContents);
+      } finally {
+        await w.webContents.debugger.detach();
+      }
+    });
+
+    it('returns undefined for an unknown id', () => {
+      expect(webContents.fromDevToolsTargetId('nope')).to.be.undefined();
+    });
+  });
+
   describe('will-prevent-unload event', function () {
     afterEach(closeAllWindows);
     it('does not emit if beforeunload returns undefined', async () => {
@@ -392,7 +410,7 @@ describe('webContents module', () => {
     const testFn = (process.platform === 'win32' && process.arch === 'arm64' ? it.skip : it);
     testFn('returns the focused web contents', async () => {
       const w = new BrowserWindow({ show: true });
-      await w.loadURL('about:blank');
+      await w.loadFile(path.join(__dirname, 'fixtures', 'blank.html'));
       expect(webContents.getFocusedWebContents().id).to.equal(w.webContents.id);
 
       const devToolsOpened = emittedOnce(w.webContents, 'devtools-opened');
@@ -1993,6 +2011,19 @@ describe('webContents module', () => {
       await w.loadURL(serverUrl);
       const body = await w.webContents.executeJavaScript('document.documentElement.textContent');
       expect(body).to.equal('401');
+    });
+  });
+
+  describe('page-title-updated event', () => {
+    afterEach(closeAllWindows);
+    it('is emitted with a full title for pages with no navigation', async () => {
+      const bw = new BrowserWindow({ show: false, webPreferences: { nativeWindowOpen: true } });
+      await bw.loadURL('about:blank');
+      bw.webContents.executeJavaScript('child = window.open("", "", "show=no"); null');
+      const [, child] = await emittedOnce(app, 'web-contents-created');
+      bw.webContents.executeJavaScript('child.document.title = "new title"');
+      const [, title] = await emittedOnce(child, 'page-title-updated');
+      expect(title).to.equal('new title');
     });
   });
 

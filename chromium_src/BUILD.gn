@@ -2,6 +2,7 @@
 # Use of this source code is governed by the MIT license that can be
 # found in the LICENSE file.
 
+import("//build/config/ozone.gni")
 import("//build/config/ui.gni")
 import("//components/spellcheck/spellcheck_build_features.gni")
 import("//electron/buildflags/buildflags.gni")
@@ -65,8 +66,11 @@ static_library("chrome") {
       "//chrome/browser/extensions/global_shortcut_listener_win.cc",
       "//chrome/browser/extensions/global_shortcut_listener_win.h",
       "//chrome/browser/icon_loader_win.cc",
+      "//chrome/browser/ui/frame/window_frame_util.h",
+      "//chrome/browser/ui/view_ids.h",
       "//chrome/browser/win/chrome_process_finder.cc",
       "//chrome/browser/win/chrome_process_finder.h",
+      "//chrome/browser/win/titlebar_config.h",
       "//chrome/child/v8_crashpad_support_win.cc",
       "//chrome/child/v8_crashpad_support_win.h",
     ]
@@ -92,12 +96,18 @@ static_library("chrome") {
 
   if (is_linux) {
     sources += [ "//chrome/browser/icon_loader_auralinux.cc" ]
+    if (use_x11 || use_ozone) {
+      sources +=
+          [ "//chrome/browser/extensions/global_shortcut_listener_linux.cc" ]
+    }
     if (use_x11) {
       sources += [
         "//chrome/browser/extensions/global_shortcut_listener_x11.cc",
         "//chrome/browser/extensions/global_shortcut_listener_x11.h",
       ]
-    } else if (use_ozone) {
+    }
+    if (use_ozone) {
+      deps += [ "//ui/ozone" ]
       sources += [
         "//chrome/browser/extensions/global_shortcut_listener_ozone.cc",
         "//chrome/browser/extensions/global_shortcut_listener_ozone.h",
@@ -138,6 +148,8 @@ static_library("chrome") {
 
   if (enable_color_chooser) {
     sources += [
+      "//chrome/browser/devtools/devtools_eye_dropper.cc",
+      "//chrome/browser/devtools/devtools_eye_dropper.h",
       "//chrome/browser/platform_util.cc",
       "//chrome/browser/platform_util.h",
       "//chrome/browser/ui/browser_dialogs.h",
@@ -188,7 +200,7 @@ static_library("chrome") {
     }
 
     if (is_linux) {
-      sources += [ "//chrome/browser/media/webrtc/window_icon_util_x11.cc" ]
+      sources += [ "//chrome/browser/media/webrtc/window_icon_util_linux.cc" ]
     }
   }
 
@@ -250,8 +262,12 @@ static_library("chrome") {
       "//chrome/browser/picture_in_picture/picture_in_picture_window_manager.h",
       "//chrome/browser/ui/views/overlay/back_to_tab_image_button.cc",
       "//chrome/browser/ui/views/overlay/back_to_tab_image_button.h",
+      "//chrome/browser/ui/views/overlay/back_to_tab_label_button.cc",
       "//chrome/browser/ui/views/overlay/close_image_button.cc",
       "//chrome/browser/ui/views/overlay/close_image_button.h",
+      "//chrome/browser/ui/views/overlay/constants.h",
+      "//chrome/browser/ui/views/overlay/hang_up_button.cc",
+      "//chrome/browser/ui/views/overlay/hang_up_button.h",
       "//chrome/browser/ui/views/overlay/overlay_window_views.cc",
       "//chrome/browser/ui/views/overlay/overlay_window_views.h",
       "//chrome/browser/ui/views/overlay/playback_image_button.cc",
@@ -260,6 +276,10 @@ static_library("chrome") {
       "//chrome/browser/ui/views/overlay/resize_handle_button.h",
       "//chrome/browser/ui/views/overlay/skip_ad_label_button.cc",
       "//chrome/browser/ui/views/overlay/skip_ad_label_button.h",
+      "//chrome/browser/ui/views/overlay/toggle_camera_button.cc",
+      "//chrome/browser/ui/views/overlay/toggle_camera_button.h",
+      "//chrome/browser/ui/views/overlay/toggle_microphone_button.cc",
+      "//chrome/browser/ui/views/overlay/toggle_microphone_button.h",
       "//chrome/browser/ui/views/overlay/track_image_button.cc",
       "//chrome/browser/ui/views/overlay/track_image_button.h",
     ]
@@ -330,17 +350,13 @@ source_set("plugins") {
   sources += [
     "//chrome/renderer/pepper/chrome_renderer_pepper_host_factory.cc",
     "//chrome/renderer/pepper/chrome_renderer_pepper_host_factory.h",
+    "//chrome/renderer/pepper/pepper_flash_font_file_host.cc",
+    "//chrome/renderer/pepper/pepper_flash_font_file_host.h",
     "//chrome/renderer/pepper/pepper_shared_memory_message_filter.cc",
     "//chrome/renderer/pepper/pepper_shared_memory_message_filter.h",
   ]
   if (enable_pdf_viewer) {
-    sources += [
-      "//chrome/renderer/pepper/pepper_flash_font_file_host.cc",
-      "//chrome/renderer/pepper/pepper_flash_font_file_host.h",
-    ]
-    if (enable_pdf_viewer) {
-      deps += [ "//components/pdf/renderer" ]
-    }
+    deps += [ "//components/pdf/renderer" ]
   }
   deps += [
     "//components/strings",

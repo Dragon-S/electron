@@ -187,9 +187,9 @@ It creates a new `BrowserWindow` with native properties as set by the `options`.
   * `parent` BrowserWindow (optional) - Specify parent window. Default is `null`.
   * `modal` Boolean (optional) - Whether this is a modal window. This only works when the
     window is a child window. Default is `false`.
-  * `acceptFirstMouse` Boolean (optional) - Whether the web view accepts a single
-    mouse-down event that simultaneously activates the window. Default is
-    `false`.
+  * `acceptFirstMouse` Boolean (optional) - Whether clicking an inactive window will also
+  click through to the web contents. Default is `false` on macOS. This option is not
+  configurable on other platforms.
   * `disableAutoHideCursor` Boolean (optional) - Whether to hide cursor when typing.
     Default is `false`.
   * `autoHideMenuBar` Boolean (optional) - Auto hide the menu bar unless the `Alt`
@@ -213,16 +213,13 @@ It creates a new `BrowserWindow` with native properties as set by the `options`.
     * `followWindow` - The backdrop should automatically appear active when the window is active, and inactive when it is not. This is the default.
     * `active` - The backdrop should always appear active.
     * `inactive` - The backdrop should always appear inactive.
-  * `titleBarStyle` String (optional) - The style of window title bar.
+  * `titleBarStyle` String (optional) _macOS_ _Windows_ - The style of window title bar.
     Default is `default`. Possible values are:
-    * `default` - Results in the standard gray opaque Mac title
-      bar.
-    * `hidden` - Results in a hidden title bar and a full size content window, yet
-      the title bar still has the standard window controls ("traffic lights") in
-      the top left.
-    * `hiddenInset` - Results in a hidden title bar with an alternative look
+    * `default` - Results in the standard title bar for macOS or Windows respectively.
+    * `hidden` - Results in a hidden title bar and a full size content window. On macOS, the window still has the standard window controls (“traffic lights”) in the top left. On Windows, when combined with `titleBarOverlay: true` it will activate the Window Controls Overlay (see `titleBarOverlay` for more information), otherwise no window controls will be shown.
+    * `hiddenInset` - Only on macOS, results in a hidden title bar with an alternative look
       where the traffic light buttons are slightly more inset from the window edge.
-    * `customButtonsOnHover` - Results in a hidden title bar and a full size
+    * `customButtonsOnHover` - Only on macOS, results in a hidden title bar and a full size
       content window, the traffic light buttons will display when being hovered
       over in the top left of the window.  **Note:** This option is currently
       experimental.
@@ -238,7 +235,7 @@ It creates a new `BrowserWindow` with native properties as set by the `options`.
     window shadow and window animations. Default is `true`.
   * `vibrancy` String (optional) - Add a type of vibrancy effect to the window, only on
     macOS. Can be `appearance-based`, `light`, `dark`, `titlebar`, `selection`,
-    `menu`, `popover`, `sidebar`, `medium-light`, `ultra-dark`, `header`, `sheet`, `window`, `hud`, `fullscreen-ui`, `tooltip`, `content`, `under-window`, or `under-page`.  Please note that using `frame: false` in combination with a vibrancy value requires that you use a non-default `titleBarStyle` as well. Also note that `appearance-based`, `light`, `dark`, `medium-light`, and `ultra-dark` are deprecated and have been removed in macOS Catalina (10.15).
+    `menu`, `popover`, `sidebar`, `medium-light`, `ultra-dark`, `header`, `sheet`, `window`, `hud`, `fullscreen-ui`, `tooltip`, `content`, `under-window`, or `under-page`. Please note that `appearance-based`, `light`, `dark`, `medium-light`, and `ultra-dark` are deprecated and have been removed in macOS Catalina (10.15).
   * `zoomToPageWidth` Boolean (optional) - Controls the behavior on macOS when
     option-clicking the green stoplight button on the toolbar or by clicking the
     Window > Zoom menu item. If `true`, the window will grow to the preferred
@@ -272,7 +269,7 @@ It creates a new `BrowserWindow` with native properties as set by the `options`.
       associated with the window, making it compatible with the Chromium
       OS-level sandbox and disabling the Node.js engine. This is not the same as
       the `nodeIntegration` option and the APIs available to the preload script
-      are more limited. Read more about the option [here](sandbox-option.md).
+      are more limited. Read more about the option [here](../tutorial/sandbox.md).
     * `enableRemoteModule` Boolean (optional) - Whether to enable the [`remote`](remote.md) module.
       Default is `false`.
     * `session` [Session](session.md#class-session) (optional) - Sets the session used by the
@@ -339,7 +336,7 @@ It creates a new `BrowserWindow` with native properties as set by the `options`.
       more details.
     * `contextIsolation` Boolean (optional) - Whether to run Electron APIs and
       the specified `preload` script in a separate JavaScript context. Defaults
-      to `false`. The context that the `preload` script runs in will only have
+      to `true`. The context that the `preload` script runs in will only have
       access to its own dedicated `document` and `window` globals, as well as
       its own set of JavaScript builtins (`Array`, `Object`, `JSON`, etc.),
       which are all invisible to the loaded content. The Electron API will only
@@ -351,8 +348,7 @@ It creates a new `BrowserWindow` with native properties as set by the `options`.
       context in the dev tools by selecting the 'Electron Isolated Context'
       entry in the combo box at the top of the Console tab.
     * `worldSafeExecuteJavaScript` Boolean (optional) - If true, values returned from `webFrame.executeJavaScript` will be sanitized to ensure JS values
-      can't unsafely cross between worlds when using `contextIsolation`.  The default
-      is `false`. In Electron 12, the default will be changed to `true`. _Deprecated_
+      can't unsafely cross between worlds when using `contextIsolation`. Defaults to `true`. _Deprecated_
     * `nativeWindowOpen` Boolean (optional) - Whether to use native
       `window.open()`. Defaults to `false`. Child windows will always have node
       integration disabled unless `nodeIntegrationInSubFrames` is true. **Note:** This option is currently
@@ -404,6 +400,7 @@ It creates a new `BrowserWindow` with native properties as set by the `options`.
       contain the layout of the document—without requiring scrolling. Enabling
       this will cause the `preferred-size-changed` event to be emitted on the
       `WebContents` when the preferred size changes. Default is `false`.
+  * `titleBarOverlay` [OverlayOptions](structures/overlay-options.md) | Boolean (optional) -  When using a frameless window in conjuction with `win.setWindowButtonVisibility(true)` on macOS or using a `titleBarStyle` so that the standard window controls ("traffic lights" on macOS) are visible, this property enables the Window Controls Overlay [JavaScript APIs][overlay-javascript-apis] and [CSS Environment Variables][overlay-css-env-vars]. Specifying `true` will result in an overlay with default system colors. Default is `false`.  On Windows, the [OverlayOptions](structures/overlay-options.md) can be used instead of a boolean to specify colors for the overlay.
 
 When setting minimum or maximum window size with `minWidth`/`maxWidth`/
 `minHeight`/`maxHeight`, it only constrains the users. It won't prevent you from
@@ -986,7 +983,7 @@ the player itself we would call this function with arguments of 16/9 and
 are within the content view--only that they exist. Sum any extra width and
 height areas you have within the overall content view.
 
-The aspect ratio is not respected when window is resized programmingly with
+The aspect ratio is not respected when window is resized programmatically with
 APIs like `win.setSize`.
 
 #### `win.setBackgroundColor(backgroundColor)`
@@ -1382,7 +1379,7 @@ Captures a snapshot of the page within `rect`. Omitting `rect` will capture the 
   * `httpReferrer` (String | [Referrer](structures/referrer.md)) (optional) - An HTTP Referrer URL.
   * `userAgent` String (optional) - A user agent originating the request.
   * `extraHeaders` String (optional) - Extra headers separated by "\n"
-  * `postData` ([UploadRawData[]](structures/upload-raw-data.md) | [UploadFile[]](structures/upload-file.md)) (optional)
+  * `postData` ([UploadRawData](structures/upload-raw-data.md) | [UploadFile](structures/upload-file.md))[] (optional)
   * `baseURLForDataURL` String (optional) - Base URL (with trailing path separator) for files to be loaded by the data URL. This is needed only if the specified `url` is a data URL and needs to load other files.
 
 Returns `Promise<void>` - the promise will resolve when the page has finished loading
@@ -1690,7 +1687,7 @@ current window into a top-level window.
 
 #### `win.getParentWindow()`
 
-Returns `BrowserWindow` - The parent window.
+Returns `BrowserWindow | null` - The parent window or `null` if there is no parent.
 
 #### `win.getChildWindows()`
 
@@ -1810,3 +1807,5 @@ removed in future Electron releases.
 [window-levels]: https://developer.apple.com/documentation/appkit/nswindow/level
 [chrome-content-scripts]: https://developer.chrome.com/extensions/content_scripts#execution-environment
 [event-emitter]: https://nodejs.org/api/events.html#events_class_eventemitter
+[overlay-javascript-apis]: https://github.com/WICG/window-controls-overlay/blob/main/explainer.md#javascript-apis
+[overlay-css-env-vars]: https://github.com/WICG/window-controls-overlay/blob/main/explainer.md#css-environment-variables

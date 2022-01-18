@@ -104,10 +104,14 @@ const warnAboutInsecureResources = function () {
     return;
   }
 
+  const isLocal = (url: URL): boolean =>
+    ['localhost', '127.0.0.1', '[::1]', ''].includes(url.hostname);
+  const isInsecure = (url: URL): boolean =>
+    ['http:', 'ftp:'].includes(url.protocol) && !isLocal(url);
+
   const resources = window.performance
     .getEntriesByType('resource')
-    .filter(({ name }) => /^(http|ftp):/gi.test(name || ''))
-    .filter(({ name }) => new URL(name).hostname !== 'localhost')
+    .filter(({ name }) => isInsecure(new URL(name)))
     .map(({ name }) => `- ${name}`)
     .join('\n');
 
@@ -270,9 +274,7 @@ const warnAboutAllowedPopups = function () {
 // Logs a warning message about the remote module
 
 const warnAboutRemoteModuleWithRemoteContent = function (webPreferences?: Electron.WebPreferences) {
-  if (!webPreferences || isLocalhost()) return;
-  const remoteModuleEnabled = webPreferences.enableRemoteModule != null ? !!webPreferences.enableRemoteModule : true;
-  if (!remoteModuleEnabled) return;
+  if (!webPreferences || !webPreferences.enableRemoteModule || isLocalhost()) return;
 
   if (getIsRemoteProtocol()) {
     const warning = `This renderer process has "enableRemoteModule" enabled
@@ -298,7 +300,9 @@ const logSecurityWarnings = function (
   warnAboutEnableBlinkFeatures(webPreferences);
   warnAboutInsecureCSP();
   warnAboutAllowedPopups();
-  warnAboutRemoteModuleWithRemoteContent(webPreferences);
+  if (BUILDFLAG(ENABLE_REMOTE_MODULE)) {
+    warnAboutRemoteModuleWithRemoteContent(webPreferences);
+  }
 };
 
 const getWebPreferences = async function () {

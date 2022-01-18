@@ -11,6 +11,7 @@
 
 #include "base/callback.h"
 #include "base/metrics/field_trial.h"
+#include "base/optional.h"
 #include "base/timer/timer.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_main_parts.h"
@@ -34,6 +35,10 @@ namespace ui {
 class GtkUiDelegate;
 }
 #endif
+
+namespace device {
+class GeolocationSystemPermissionManager;
+}  // namespace device
 
 namespace electron {
 
@@ -73,11 +78,15 @@ class ElectronBrowserMainParts : public content::BrowserMainParts {
   bool SetExitCode(int code);
 
   // Gets the exit code
-  int GetExitCode();
+  int GetExitCode() const;
 
   // Returns the connection to GeolocationControl which can be
   // used to enable the location services once per client.
   device::mojom::GeolocationControl* GetGeolocationControl();
+
+#if defined(OS_MAC)
+  device::GeolocationSystemPermissionManager* GetLocationPermissionManager();
+#endif
 
   // Returns handle to the class responsible for extracting file icons.
   IconManager* GetIconManager();
@@ -91,9 +100,9 @@ class ElectronBrowserMainParts : public content::BrowserMainParts {
   void PostEarlyInitialization() override;
   int PreCreateThreads() override;
   void ToolkitInitialized() override;
-  void PreMainMessageLoopRun() override;
-  bool MainMessageLoopRun(int* result_code) override;
-  void PreDefaultMainMessageLoopRun(base::OnceClosure quit_closure) override;
+  int PreMainMessageLoopRun() override;
+  void WillRunMainMessageLoop(
+      std::unique_ptr<base::RunLoop>& run_loop) override;
   void PostMainMessageLoopStart() override;
   void PostMainMessageLoopRun() override;
   void PreMainMessageLoopStart() override;
@@ -141,8 +150,9 @@ class ElectronBrowserMainParts : public content::BrowserMainParts {
   // A fake BrowserProcess object that used to feed the source code from chrome.
   std::unique_ptr<BrowserProcessImpl> fake_browser_process_;
 
-  // Pointer to exit code.
-  int* exit_code_ = nullptr;
+  // A place to remember the exit code once the message loop is ready.
+  // Before then, we just exit() without any intermediate steps.
+  base::Optional<int> exit_code_;
 
   std::unique_ptr<JavascriptEnvironment> js_env_;
   std::unique_ptr<Browser> browser_;
@@ -158,6 +168,11 @@ class ElectronBrowserMainParts : public content::BrowserMainParts {
 #endif
 
   mojo::Remote<device::mojom::GeolocationControl> geolocation_control_;
+
+#if defined(OS_MAC)
+  std::unique_ptr<device::GeolocationSystemPermissionManager>
+      location_permission_manager_;
+#endif
 
   static ElectronBrowserMainParts* self_;
 

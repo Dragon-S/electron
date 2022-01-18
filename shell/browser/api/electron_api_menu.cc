@@ -236,7 +236,7 @@ std::u16string Menu::GetToolTipAt(int index) const {
   return model_->GetToolTipAt(index);
 }
 
-std::u16string Menu::GetAcceleratorTextAt(int index) const {
+std::u16string Menu::GetAcceleratorTextAtForTesting(int index) const {
   ui::Accelerator accelerator;
   model_->GetAcceleratorAtWithParams(index, true, &accelerator);
   return accelerator.GetShortcutText();
@@ -289,13 +289,13 @@ v8::Local<v8::ObjectTemplate> Menu::FillObjectTemplate(
       .SetMethod("getLabelAt", &Menu::GetLabelAt)
       .SetMethod("getSublabelAt", &Menu::GetSublabelAt)
       .SetMethod("getToolTipAt", &Menu::GetToolTipAt)
-      .SetMethod("getAcceleratorTextAt", &Menu::GetAcceleratorTextAt)
       .SetMethod("isItemCheckedAt", &Menu::IsItemCheckedAt)
       .SetMethod("isEnabledAt", &Menu::IsEnabledAt)
       .SetMethod("worksWhenHiddenAt", &Menu::WorksWhenHiddenAt)
       .SetMethod("isVisibleAt", &Menu::IsVisibleAt)
       .SetMethod("popupAt", &Menu::PopupAt)
       .SetMethod("closePopupAt", &Menu::ClosePopupAt)
+      .SetMethod("_getAcceleratorTextAt", &Menu::GetAcceleratorTextAtForTesting)
       .Build();
 }
 

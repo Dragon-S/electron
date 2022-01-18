@@ -23,7 +23,7 @@
 @class ElectronNSWindowDelegate;
 @class ElectronPreviewItem;
 @class ElectronTouchBar;
-@class WindowButtonsView;
+@class WindowButtonsProxy;
 
 namespace electron {
 
@@ -78,7 +78,8 @@ class NativeWindowMac : public NativeWindow,
   bool IsClosable() override;
   void SetAlwaysOnTop(ui::ZOrderLevel z_order,
                       const std::string& level,
-                      int relativeLevel) override;
+                      int relative_level) override;
+  std::string GetAlwaysOnTopLevel() override;
   ui::ZOrderLevel GetZOrderLevel() override;
   void Center() override;
   void Invalidate() override;
@@ -146,8 +147,11 @@ class NativeWindowMac : public NativeWindow,
   void CloseFilePreview() override;
   gfx::Rect ContentBoundsToWindowBounds(const gfx::Rect& bounds) const override;
   gfx::Rect WindowBoundsToContentBounds(const gfx::Rect& bounds) const override;
+  gfx::Rect GetWindowControlsOverlayRect() override;
   void NotifyWindowEnterFullScreen() override;
   void NotifyWindowLeaveFullScreen() override;
+  void SetActive(bool is_key) override;
+  bool IsActive() const override;
 
   void NotifyWindowWillEnterFullScreen();
   void NotifyWindowWillLeaveFullScreen();
@@ -159,6 +163,8 @@ class NativeWindowMac : public NativeWindow,
 
   // Use a custom content view instead of Chromium's BridgedContentView.
   void OverrideNSWindowContentView();
+
+  void UpdateVibrancyRadii(bool fullscreen);
 
   // Set the attribute of NSWindow while work around a bug of zoom button.
   void SetStyleMask(bool on, NSUInteger flag);
@@ -177,18 +183,23 @@ class NativeWindowMac : public NativeWindow,
     kInactive,
   };
 
-  enum class TitleBarStyle {
-    kNormal,
-    kHidden,
-    kHiddenInset,
-    kCustomButtonsOnHover,
-  };
-  TitleBarStyle title_bar_style() const { return title_bar_style_; }
-
   ElectronPreviewItem* preview_item() const { return preview_item_.get(); }
   ElectronTouchBar* touch_bar() const { return touch_bar_.get(); }
   bool zoom_to_page_width() const { return zoom_to_page_width_; }
   bool always_simple_fullscreen() const { return always_simple_fullscreen_; }
+
+  // We need to save the result of windowWillUseStandardFrame:defaultFrame
+  // because macOS calls it with what it refers to as the "best fit" frame for a
+  // zoom. This means that even if an aspect ratio is set, macOS might adjust it
+  // to better fit the screen.
+  //
+  // Thus, we can't just calculate the maximized aspect ratio'd sizing from
+  // the current visible screen and compare that to the current window's frame
+  // to determine whether a window is maximized.
+  NSRect default_frame_for_zoom() const { return default_frame_for_zoom_; }
+  void set_default_frame_for_zoom(NSRect frame) {
+    default_frame_for_zoom_ = frame;
+  }
 
  protected:
   // views::WidgetDelegate:
@@ -207,7 +218,6 @@ class NativeWindowMac : public NativeWindow,
   void AddContentViewLayers();
 
   void InternalSetWindowButtonVisibility(bool visible);
-  void InternalSetStandardButtonsVisibility(bool visible);
   void InternalSetParentWindow(NativeWindow* parent, bool attach);
   void SetForwardMouseMessages(bool forward);
 
@@ -216,7 +226,6 @@ class NativeWindowMac : public NativeWindow,
   base::scoped_nsobject<ElectronNSWindowDelegate> window_delegate_;
   base::scoped_nsobject<ElectronPreviewItem> preview_item_;
   base::scoped_nsobject<ElectronTouchBar> touch_bar_;
-  base::scoped_nsobject<WindowButtonsView> buttons_view_;
 
   // Event monitor for scroll wheel event.
   id wheel_event_monitor_;
@@ -246,15 +255,15 @@ class NativeWindowMac : public NativeWindow,
   // The presentation options before entering kiosk mode.
   NSApplicationPresentationOptions kiosk_options_;
 
-  // The "titleBarStyle" option.
-  TitleBarStyle title_bar_style_ = TitleBarStyle::kNormal;
-
   // The "visualEffectState" option.
   VisualEffectState visual_effect_state_ = VisualEffectState::kFollowWindow;
 
   // The visibility mode of window button controls when explicitly set through
   // setWindowButtonVisibility().
   base::Optional<bool> window_button_visibility_;
+
+  // Controls the position and visibility of window buttons.
+  base::scoped_nsobject<WindowButtonsProxy> buttons_proxy_;
 
   // Maximizable window state; necessary for persistence through redraws.
   bool maximizable_ = true;
@@ -264,12 +273,13 @@ class NativeWindowMac : public NativeWindow,
   bool is_simple_fullscreen_ = false;
   bool was_maximizable_ = false;
   bool was_movable_ = false;
+  bool is_active_ = false;
   NSRect original_frame_;
   NSInteger original_level_;
   NSUInteger simple_fullscreen_mask_;
+  NSRect default_frame_for_zoom_;
 
-  base::scoped_nsobject<NSColor> background_color_before_vibrancy_;
-  bool transparency_before_vibrancy_ = false;
+  std::string vibrancy_type_;
 
   // The presentation options before entering simple fullscreen mode.
   NSApplicationPresentationOptions simple_fullscreen_options_;

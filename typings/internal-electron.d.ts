@@ -65,12 +65,12 @@ declare namespace Electron {
     getOwnerBrowserWindow(): Electron.BrowserWindow;
     getWebPreferences(): Electron.WebPreferences;
     getLastWebPreferences(): Electron.WebPreferences;
+    _getProcessMemoryInfo(): Electron.ProcessMemoryInfo;
     _getPreloadPaths(): string[];
     equal(other: WebContents): boolean;
-    _initiallyShown: boolean;
     browserWindowOptions: BrowserWindowConstructorOptions;
-    _windowOpenHandler: ((opts: {url: string, frameName: string, features: string}) => any) | null;
-    _callWindowOpenHandler(event: any, url: string, frameName: string, rawFeatures: string): Electron.BrowserWindowConstructorOptions | null;
+    _windowOpenHandler: ((details: Electron.HandlerDetails) => any) | null;
+    _callWindowOpenHandler(event: any, details: Electron.HandlerDetails): Electron.BrowserWindowConstructorOptions | null;
     _setNextChildWebPreferences(prefs: Partial<Electron.BrowserWindowConstructorOptions['webPreferences']> & Pick<Electron.BrowserWindowConstructorOptions, 'backgroundColor'>): void;
     _send(internal: boolean, channel: string, args: any): boolean;
     _sendToFrameInternal(frameId: number | [number, number], channel: string, ...args: any[]): boolean;
@@ -141,7 +141,7 @@ declare namespace Electron {
     insertSeparator(index: number): void;
     insertSubMenu(index: number, commandId: number, label: string, submenu?: Menu): void;
     delegate?: any;
-    getAcceleratorTextAt(index: number): string;
+    _getAcceleratorTextAt(index: number): string;
   }
 
   interface MenuItem {
@@ -317,7 +317,7 @@ declare namespace ElectronInternal {
 
 declare namespace Chrome {
   namespace Tabs {
-    // https://developer.chrome.com/extensions/tabs#method-executeScript
+    // https://developer.chrome.com/docs/extensions/tabs#method-executeScript
     interface ExecuteScriptDetails {
       code?: string;
       file?: string;
@@ -330,7 +330,7 @@ declare namespace Chrome {
 
     type ExecuteScriptCallback = (result: Array<any>) => void;
 
-    // https://developer.chrome.com/extensions/tabs#method-sendMessage
+    // https://developer.chrome.com/docs/extensions/tabs#method-sendMessage
     interface SendMessageDetails {
       frameId?: number;
     }

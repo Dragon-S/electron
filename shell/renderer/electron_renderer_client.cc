@@ -11,7 +11,6 @@
 #include "content/public/renderer/render_frame.h"
 #include "electron/buildflags/buildflags.h"
 #include "shell/common/api/electron_bindings.h"
-#include "shell/common/asar/asar_util.h"
 #include "shell/common/gin_helper/dictionary.h"
 #include "shell/common/gin_helper/event_emitter_caller.h"
 #include "shell/common/node_bindings.h"
@@ -35,26 +34,12 @@ bool IsDevToolsExtension(content::RenderFrame* render_frame) {
 
 }  // namespace
 
-// static
-ElectronRendererClient* ElectronRendererClient::self_ = nullptr;
-
 ElectronRendererClient::ElectronRendererClient()
     : node_bindings_(
           NodeBindings::Create(NodeBindings::BrowserEnvironment::kRenderer)),
-      electron_bindings_(new ElectronBindings(node_bindings_->uv_loop())) {
-  DCHECK(!self_) << "Cannot have two ElectronRendererClient";
-  self_ = this;
-}
+      electron_bindings_(new ElectronBindings(node_bindings_->uv_loop())) {}
 
-ElectronRendererClient::~ElectronRendererClient() {
-  asar::ClearArchives();
-}
-
-// static
-ElectronRendererClient* ElectronRendererClient::Get() {
-  DCHECK(self_);
-  return self_;
-}
+ElectronRendererClient::~ElectronRendererClient() = default;
 
 void ElectronRendererClient::RenderFrameCreated(
     content::RenderFrame* render_frame) {
@@ -92,8 +77,8 @@ void ElectronRendererClient::DidCreateScriptContext(
   // TODO(zcbenz): Do not create Node environment if node integration is not
   // enabled.
 
-  // Only load node if we are a main frame or a devtools extension
-  // unless node support has been explicitly enabled for sub frames
+  // Only load Node.js if we are a main frame or a devtools extension
+  // unless Node.js support has been explicitly enabled for subframes.
   auto prefs = render_frame->GetBlinkPreferences();
   bool reuse_renderer_processes_enabled =
       prefs.disable_electron_site_instance_overrides;
@@ -109,6 +94,7 @@ void ElectronRendererClient::DidCreateScriptContext(
                        (is_not_opened || reuse_renderer_processes_enabled);
   bool is_devtools = IsDevToolsExtension(render_frame);
   bool allow_node_in_subframes = prefs.node_integration_in_sub_frames;
+
   bool should_load_node =
       (is_main_frame || is_devtools || allow_node_in_subframes) &&
       !IsWebViewFrame(renderer_context, render_frame);
@@ -197,7 +183,6 @@ void ElectronRendererClient::WillReleaseScriptContext(
 bool ElectronRendererClient::ShouldFork(blink::WebLocalFrame* frame,
                                         const GURL& url,
                                         const std::string& http_method,
-                                        bool is_initial_navigation,
                                         bool is_server_redirect) {
   // Handle all the navigations and reloads in browser.
   // FIXME We only support GET here because http method will be ignored when

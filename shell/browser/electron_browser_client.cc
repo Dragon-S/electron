@@ -27,6 +27,7 @@
 #include "base/task/post_task.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/chrome_version.h"
 #include "components/net_log/chrome_net_log.h"
 #include "components/network_hints/common/network_hints.mojom.h"
@@ -142,6 +143,7 @@
 #include "extensions/browser/extension_message_filter.h"
 #include "extensions/browser/extension_navigation_throttle.h"
 #include "extensions/browser/extension_navigation_ui_data.h"
+#include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_protocols.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extensions_browser_client.h"
@@ -200,7 +202,8 @@ bool g_suppress_renderer_process_restart = false;
 content::SiteInfo GetSiteForURL(content::BrowserContext* browser_context,
                                 const GURL& url) {
   return content::SiteInfo::Create(
-      content::IsolationContext(browser_context), content::UrlInfo(url, false),
+      content::IsolationContext(browser_context),
+      content::UrlInfo(url, content::UrlInfo::OriginIsolationRequest::kNone),
       content::CoopCoepCrossOriginIsolatedInfo::CreateNonIsolated());
 }
 
@@ -244,6 +247,15 @@ enum class RenderProcessHostPrivilege {
   kIsolated,
   kExtension,
 };
+
+// Copied from chrome/browser/extensions/extension_util.cc.
+bool AllowFileAccess(const std::string& extension_id,
+                     content::BrowserContext* context) {
+  return base::CommandLine::ForCurrentProcess()->HasSwitch(
+             ::switches::kDisableExtensionsFileAccessCheck) ||
+         extensions::ExtensionPrefs::Get(context)->AllowFileAccess(
+             extension_id);
+}
 
 RenderProcessHostPrivilege GetPrivilegeRequiredByUrl(
     const GURL& url,
@@ -1095,7 +1107,13 @@ ElectronBrowserClient::GetSystemNetworkContext() {
 std::unique_ptr<content::BrowserMainParts>
 ElectronBrowserClient::CreateBrowserMainParts(
     const content::MainFunctionParams& params) {
-  return std::make_unique<ElectronBrowserMainParts>(params);
+  auto browser_main_parts = std::make_unique<ElectronBrowserMainParts>(params);
+
+#if defined(OS_MAC)
+  browser_main_parts_ = browser_main_parts.get();
+#endif
+
+  return browser_main_parts;
 }
 
 void ElectronBrowserClient::WebNotificationAllowed(
@@ -1203,9 +1221,9 @@ content::MediaObserver* ElectronBrowserClient::GetMediaObserver() {
   return MediaCaptureDevicesDispatcher::GetInstance();
 }
 
-content::DevToolsManagerDelegate*
-ElectronBrowserClient::GetDevToolsManagerDelegate() {
-  return new DevToolsManagerDelegate;
+std::unique_ptr<content::DevToolsManagerDelegate>
+ElectronBrowserClient::CreateDevToolsManagerDelegate() {
+  return std::make_unique<DevToolsManagerDelegate>();
 }
 
 NotificationPresenter* ElectronBrowserClient::GetNotificationPresenter() {
@@ -1225,12 +1243,10 @@ ElectronBrowserClient::GetPlatformNotificationService(
 }
 
 base::FilePath ElectronBrowserClient::GetDefaultDownloadDirectory() {
-  // ~/Downloads
-  base::FilePath path;
-  if (base::PathService::Get(base::DIR_HOME, &path))
-    path = path.Append(FILE_PATH_LITERAL("Downloads"));
-
-  return path;
+  base::FilePath download_path;
+  if (base::PathService::Get(chrome::DIR_DEFAULT_DOWNLOADS, &download_path))
+    return download_path;
+  return base::FilePath();
 }
 
 scoped_refptr<network::SharedURLLoaderFactory>
@@ -1334,7 +1350,6 @@ class FileURLLoaderFactory : public network::SelfDeletingURLLoaderFactory {
   // network::mojom::URLLoaderFactory:
   void CreateLoaderAndStart(
       mojo::PendingReceiver<network::mojom::URLLoader> loader,
-      int32_t routing_id,
       int32_t request_id,
       uint32_t options,
       const network::ResourceRequest& request,
@@ -1423,12 +1438,12 @@ void ElectronBrowserClient::RegisterNonNetworkSubresourceURLLoaderFactories(
                            {content::kChromeUIResourcesHost}));
   }
 
-  // Extension with a background page get file access that gets approval from
-  // ChildProcessSecurityPolicy.
-  extensions::ExtensionHost* host =
-      extensions::ProcessManager::Get(web_contents->GetBrowserContext())
-          ->GetBackgroundHostForExtension(extension->id());
-  if (host) {
+  // Extensions with the necessary permissions get access to file:// URLs that
+  // gets approval from ChildProcessSecurityPolicy. Keep this logic in sync with
+  // ExtensionWebContentsObserver::RenderFrameCreated.
+  extensions::Manifest::Type type = extension->GetType();
+  if (type == extensions::Manifest::TYPE_EXTENSION &&
+      AllowFileAccess(extension->id(), web_contents->GetBrowserContext())) {
     factories->emplace(url::kFileScheme,
                        FileURLLoaderFactory::Create(render_process_id));
   }
@@ -1573,10 +1588,13 @@ bool ElectronBrowserClient::WillCreateURLLoaderFactory(
       ProtocolRegistry::FromBrowserContext(browser_context);
   new ProxyingURLLoaderFactory(
       web_request.get(), protocol_registry->intercept_handlers(),
-      render_process_id, &next_id_, std::move(navigation_ui_data),
-      std::move(navigation_id), std::move(proxied_receiver),
-      std::move(target_factory_remote), std::move(header_client_receiver),
-      type);
+      render_process_id,
+      frame_host ? frame_host->GetRoutingID() : MSG_ROUTING_NONE,
+      frame_host ? frame_host->GetRenderViewHost()->GetRoutingID()
+                 : MSG_ROUTING_NONE,
+      &next_id_, std::move(navigation_ui_data), std::move(navigation_id),
+      std::move(proxied_receiver), std::move(target_factory_remote),
+      std::move(header_client_receiver), type);
 
   if (bypass_redirect_checks)
     *bypass_redirect_checks = true;
@@ -1801,6 +1819,15 @@ content::BluetoothDelegate* ElectronBrowserClient::GetBluetoothDelegate() {
   if (!bluetooth_delegate_)
     bluetooth_delegate_ = std::make_unique<ElectronBluetoothDelegate>();
   return bluetooth_delegate_.get();
+}
+
+device::GeolocationSystemPermissionManager*
+ElectronBrowserClient::GetLocationPermissionManager() {
+#if defined(OS_MAC)
+  return browser_main_parts_->GetLocationPermissionManager();
+#else
+  return nullptr;
+#endif
 }
 
 }  // namespace electron

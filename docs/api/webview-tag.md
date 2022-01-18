@@ -5,7 +5,7 @@
 Electron's `webview` tag is based on [Chromium's `webview`][chrome-webview], which
 is undergoing dramatic architectural changes. This impacts the stability of `webviews`,
 including rendering, navigation, and event routing. We currently recommend to not
-use the `webview` tag and to consider alternatives, like `iframe`, Electron's `BrowserView`,
+use the `webview` tag and to consider alternatives, like `iframe`, [Electron's `BrowserView`](browser-view.md),
 or an architecture that avoids embedded content altogether.
 
 ## Enabling
@@ -151,12 +151,16 @@ browser plugins. Plugins are disabled by default.
 ### `preload`
 
 ```html
+<!-- from a file -->
 <webview src="https://www.github.com/" preload="./test.js"></webview>
+<!-- or if you want to load from an asar archive -->
+<webview src="https://www.github.com/" preload="./app.asar/test.js"></webview>
 ```
 
 A `String` that specifies a script that will be loaded before other scripts run in the guest
-page. The protocol of script's URL must be either `file:` or `asar:`, because it
-will be loaded by `require` in guest page under the hood.
+page. The protocol of script's URL must be `file:` (even when using `asar:` archives) because
+it will be loaded by Node's `require` under the hood, which treats `asar:` archives as virtual
+directories.
 
 When the guest page doesn't have node integration this script will still have
 access to all Node APIs, but global objects injected by Node will be deleted
@@ -274,7 +278,7 @@ webview.addEventListener('dom-ready', () => {
   * `httpReferrer` (String | [Referrer](structures/referrer.md)) (optional) - An HTTP Referrer url.
   * `userAgent` String (optional) - A user agent originating the request.
   * `extraHeaders` String (optional) - Extra headers separated by "\n"
-  * `postData` ([UploadRawData[]](structures/upload-raw-data.md) | [UploadFile[]](structures/upload-file.md)) (optional)
+  * `postData` ([UploadRawData](structures/upload-raw-data.md) | [UploadFile](structures/upload-file.md))[] (optional)
   * `baseURLForDataURL` String (optional) - Base url (with trailing path separator) for files to be loaded by the data url. This is needed only if the specified `url` is a data url and needs to load other files.
 
 Returns `Promise<void>` - The promise will resolve when the page has finished loading
@@ -515,8 +519,7 @@ Inserts `text` to the focused element.
 * `text` String - Content to be searched, must not be empty.
 * `options` Object (optional)
   * `forward` Boolean (optional) - Whether to search forward or backward, defaults to `true`.
-  * `findNext` Boolean (optional) - Whether the operation is first request or a follow up,
-    defaults to `false`.
+  * `findNext` Boolean (optional) - Whether to begin a new text finding session with this request. Should be `true` for initial requests, and `false` for follow-up requests. Defaults to `false`.
   * `matchCase` Boolean (optional) - Whether search should be case-sensitive,
     defaults to `false`.
 
@@ -719,6 +722,10 @@ Corresponds to the points in time when the spinner of the tab starts spinning.
 
 Corresponds to the points in time when the spinner of the tab stops spinning.
 
+### Event: 'did-attach'
+
+Fired when attached to the embedder web contents.
+
 ### Event: 'dom-ready'
 
 Fired when document in the given frame is loaded.
@@ -839,6 +846,19 @@ this purpose.
 
 Calling `event.preventDefault()` does __NOT__ have any effect.
 
+### Event: 'did-start-navigation'
+
+Returns:
+
+* `url` String
+* `isInPlace` Boolean
+* `isMainFrame` Boolean
+* `frameProcessId` Integer
+* `frameRoutingId` Integer
+
+Emitted when any frame (including main) starts navigating. `isInPlace` will be
+`true` for in-page navigations.
+
 ### Event: 'did-navigate'
 
 Returns:
@@ -846,6 +866,23 @@ Returns:
 * `url` String
 
 Emitted when a navigation is done.
+
+This event is not emitted for in-page navigations, such as clicking anchor links
+or updating the `window.location.hash`. Use `did-navigate-in-page` event for
+this purpose.
+
+### Event: 'did-frame-navigate'
+
+Returns:
+
+* `url` String
+* `httpResponseCode` Integer - -1 for non HTTP navigations
+* `httpStatusText` String - empty for non HTTP navigations,
+* `isMainFrame` Boolean
+* `frameProcessId` Integer
+* `frameRoutingId` Integer
+
+Emitted when any frame navigation is done.
 
 This event is not emitted for in-page navigations, such as clicking anchor links
 or updating the `window.location.hash`. Use `did-navigate-in-page` event for
@@ -967,3 +1004,78 @@ Emitted when DevTools is focused / opened.
 
 [runtime-enabled-features]: https://cs.chromium.org/chromium/src/third_party/blink/renderer/platform/runtime_enabled_features.json5?l=70
 [chrome-webview]: https://developer.chrome.com/docs/extensions/reference/webviewTag/
+
+### Event: 'context-menu'
+
+Returns:
+
+* `params` Object
+  * `x` Integer - x coordinate.
+  * `y` Integer - y coordinate.
+  * `linkURL` String - URL of the link that encloses the node the context menu
+    was invoked on.
+  * `linkText` String - Text associated with the link. May be an empty
+    string if the contents of the link are an image.
+  * `pageURL` String - URL of the top level page that the context menu was
+    invoked on.
+  * `frameURL` String - URL of the subframe that the context menu was invoked
+    on.
+  * `srcURL` String - Source URL for the element that the context menu
+    was invoked on. Elements with source URLs are images, audio and video.
+  * `mediaType` String - Type of the node the context menu was invoked on. Can
+    be `none`, `image`, `audio`, `video`, `canvas`, `file` or `plugin`.
+  * `hasImageContents` Boolean - Whether the context menu was invoked on an image
+    which has non-empty contents.
+  * `isEditable` Boolean - Whether the context is editable.
+  * `selectionText` String - Text of the selection that the context menu was
+    invoked on.
+  * `titleText` String - Title text of the selection that the context menu was
+    invoked on.
+  * `altText` String - Alt text of the selection that the context menu was
+    invoked on.
+  * `suggestedFilename` String - Suggested filename to be used when saving file through 'Save
+    Link As' option of context menu.
+  * `selectionRect` [Rectangle](structures/rectangle.md) - Rect representing the coordinates in the document space of the selection.
+  * `selectionStartOffset` Number - Start position of the selection text.
+  * `referrerPolicy` [Referrer](structures/referrer.md) - The referrer policy of the frame on which the menu is invoked.
+  * `misspelledWord` String - The misspelled word under the cursor, if any.
+  * `dictionarySuggestions` String[] - An array of suggested words to show the
+    user to replace the `misspelledWord`.  Only available if there is a misspelled
+    word and spellchecker is enabled.
+  * `frameCharset` String - The character encoding of the frame on which the
+    menu was invoked.
+  * `inputFieldType` String - If the context menu was invoked on an input
+    field, the type of that field. Possible values are `none`, `plainText`,
+    `password`, `other`.
+  * `spellcheckEnabled` Boolean - If the context is editable, whether or not spellchecking is enabled.
+  * `menuSourceType` String - Input source that invoked the context menu.
+    Can be `none`, `mouse`, `keyboard`, `touch`, `touchMenu`, `longPress`, `longTap`, `touchHandle`, `stylus`, `adjustSelection`, or `adjustSelectionReset`.
+  * `mediaFlags` Object - The flags for the media element the context menu was
+    invoked on.
+    * `inError` Boolean - Whether the media element has crashed.
+    * `isPaused` Boolean - Whether the media element is paused.
+    * `isMuted` Boolean - Whether the media element is muted.
+    * `hasAudio` Boolean - Whether the media element has audio.
+    * `isLooping` Boolean - Whether the media element is looping.
+    * `isControlsVisible` Boolean - Whether the media element's controls are
+      visible.
+    * `canToggleControls` Boolean - Whether the media element's controls are
+      toggleable.
+    * `canPrint` Boolean - Whether the media element can be printed.
+    * `canSave` Boolean - Whether or not the media element can be downloaded.
+    * `canShowPictureInPicture` Boolean - Whether the media element can show picture-in-picture.
+    * `isShowingPictureInPicture` Boolean - Whether the media element is currently showing picture-in-picture.
+    * `canRotate` Boolean - Whether the media element can be rotated.
+    * `canLoop` Boolean - Whether the media element can be looped.
+  * `editFlags` Object - These flags indicate whether the renderer believes it
+    is able to perform the corresponding action.
+    * `canUndo` Boolean - Whether the renderer believes it can undo.
+    * `canRedo` Boolean - Whether the renderer believes it can redo.
+    * `canCut` Boolean - Whether the renderer believes it can cut.
+    * `canCopy` Boolean - Whether the renderer believes it can copy.
+    * `canPaste` Boolean - Whether the renderer believes it can paste.
+    * `canDelete` Boolean - Whether the renderer believes it can delete.
+    * `canSelectAll` Boolean - Whether the renderer believes it can select all.
+    * `canEditRichly` Boolean - Whether the renderer believes it can edit text richly.
+
+Emitted when there is a new context menu that needs to be handled.

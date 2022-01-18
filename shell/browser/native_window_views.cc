@@ -71,16 +71,34 @@
 
 #elif defined(OS_WIN)
 #include "base/win/win_util.h"
+#include "extensions/common/image_util.h"
 #include "shell/browser/ui/views/win_frame_view.h"
 #include "shell/browser/ui/win/electron_desktop_native_widget_aura.h"
 #include "skia/ext/skia_utils_win.h"
 #include "ui/base/win/shell.h"
 #include "ui/display/screen.h"
 #include "ui/display/win/screen_win.h"
+#include "ui/gfx/color_utils.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 #endif
 
 namespace electron {
+
+#if defined(OS_WIN)
+
+// Similar to the ones in display::win::ScreenWin, but with rounded values
+// These help to avoid problems that arise from unresizable windows where the
+// original ceil()-ed values can cause calculation errors, since converting
+// both ways goes through a ceil() call. Related issue: #15816
+gfx::Rect ScreenToDIPRect(HWND hwnd, const gfx::Rect& pixel_bounds) {
+  float scale_factor = display::win::ScreenWin::GetScaleFactorForHWND(hwnd);
+  gfx::Rect dip_rect = ScaleToRoundedRect(pixel_bounds, 1.0f / scale_factor);
+  dip_rect.set_origin(
+      display::win::ScreenWin::ScreenToDIPRect(hwnd, pixel_bounds).origin());
+  return dip_rect;
+}
+
+#endif
 
 namespace {
 
@@ -94,18 +112,11 @@ void FlipWindowStyle(HWND handle, bool on, DWORD flag) {
   else
     style &= ~flag;
   ::SetWindowLong(handle, GWL_STYLE, style);
-}
-
-// Similar to the ones in display::win::ScreenWin, but with rounded values
-// These help to avoid problems that arise from unresizable windows where the
-// original ceil()-ed values can cause calculation errors, since converting
-// both ways goes through a ceil() call. Related issue: #15816
-gfx::Rect ScreenToDIPRect(HWND hwnd, const gfx::Rect& pixel_bounds) {
-  float scale_factor = display::win::ScreenWin::GetScaleFactorForHWND(hwnd);
-  gfx::Rect dip_rect = ScaleToRoundedRect(pixel_bounds, 1.0f / scale_factor);
-  dip_rect.set_origin(
-      display::win::ScreenWin::ScreenToDIPRect(hwnd, pixel_bounds).origin());
-  return dip_rect;
+  // Window's frame styles are cached so we need to call SetWindowPos
+  // with the SWP_FRAMECHANGED flag to update cache properly.
+  ::SetWindowPos(handle, 0, 0, 0, 0, 0,  // ignored
+                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                     SWP_NOACTIVATE | SWP_NOOWNERZORDER);
 }
 
 gfx::Rect DIPToScreenRect(HWND hwnd, const gfx::Rect& pixel_bounds) {
@@ -161,6 +172,37 @@ NativeWindowViews::NativeWindowViews(const gin_helper::Dictionary& options,
   options.Get("thickFrame", &thick_frame_);
   if (transparent())
     thick_frame_ = false;
+
+  overlay_button_color_ = color_utils::GetSysSkColor(COLOR_BTNFACE);
+  overlay_symbol_color_ = color_utils::GetSysSkColor(COLOR_BTNTEXT);
+
+  v8::Local<v8::Value> titlebar_overlay;
+  if (options.Get(options::ktitleBarOverlay, &titlebar_overlay) &&
+      titlebar_overlay->IsObject()) {
+    v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
+    gin_helper::Dictionary titlebar_overlay_obj =
+        gin::Dictionary::CreateEmpty(isolate);
+    options.Get(options::ktitleBarOverlay, &titlebar_overlay_obj);
+
+    std::string overlay_color_string;
+    if (titlebar_overlay_obj.Get(options::kOverlayButtonColor,
+                                 &overlay_color_string)) {
+      bool success = extensions::image_util::ParseCssColorString(
+          overlay_color_string, &overlay_button_color_);
+      DCHECK(success);
+    }
+
+    std::string overlay_symbol_color_string;
+    if (titlebar_overlay_obj.Get(options::kOverlaySymbolColor,
+                                 &overlay_symbol_color_string)) {
+      bool success = extensions::image_util::ParseCssColorString(
+          overlay_symbol_color_string, &overlay_symbol_color_);
+      DCHECK(success);
+    }
+  }
+
+  if (title_bar_style_ != TitleBarStyle::kNormal)
+    set_has_frame(false);
 #endif
 
   if (enable_larger_than_screen())
@@ -328,12 +370,12 @@ NativeWindowViews::NativeWindowViews(const gin_helper::Dictionary& options,
     last_window_state_ = ui::SHOW_STATE_NORMAL;
 #endif
 
-#if defined(OS_LINUX)
-  // Listen to move events.
+  // Listen to mouse events.
   aura::Window* window = GetNativeWindow();
   if (window)
     window->AddPreTargetHandler(this);
 
+#if defined(OS_LINUX)
   // On linux after the widget is initialized we might have to force set the
   // bounds if the bounds are smaller than the current display
   SetBounds(gfx::Rect(GetPosition(), bounds.size()), false);
@@ -348,11 +390,9 @@ NativeWindowViews::~NativeWindowViews() {
   SetForwardMouseMessages(false);
 #endif
 
-#if defined(OS_LINUX)
   aura::Window* window = GetNativeWindow();
   if (window)
     window->RemovePreTargetHandler(this);
-#endif
 }
 
 void NativeWindowViews::SetGTKDarkThemeEnabled(bool use_dark_theme) {
@@ -1068,8 +1108,17 @@ void NativeWindowViews::SetIgnoreMouseEvents(bool ignore, bool forward) {
 
 void NativeWindowViews::SetContentProtection(bool enable) {
 #if defined(OS_WIN)
+  HWND hwnd = GetAcceleratedWidget();
   DWORD affinity = enable ? WDA_EXCLUDEFROMCAPTURE : WDA_NONE;
-  ::SetWindowDisplayAffinity(GetAcceleratedWidget(), affinity);
+  ::SetWindowDisplayAffinity(hwnd, affinity);
+  if (!layered_) {
+    // Workaround to prevent black window on screen capture after hiding and
+    // showing the BrowserWindow.
+    LONG ex_style = ::GetWindowLong(hwnd, GWL_EXSTYLE);
+    ex_style |= WS_EX_LAYERED;
+    ::SetWindowLong(hwnd, GWL_EXSTYLE, ex_style);
+    layered_ = true;
+  }
 #endif
 }
 
@@ -1446,11 +1495,9 @@ void NativeWindowViews::OnWidgetBoundsChanged(views::Widget* changed_widget,
 }
 
 void NativeWindowViews::OnWidgetDestroying(views::Widget* widget) {
-#if defined(OS_LINUX)
   aura::Window* window = GetNativeWindow();
   if (window)
     window->RemovePreTargetHandler(this);
-#endif
 }
 
 void NativeWindowViews::OnWidgetDestroyed(views::Widget* changed_widget) {
@@ -1568,21 +1615,33 @@ void NativeWindowViews::HandleKeyboardEvent(
   root_view_->HandleKeyEvent(event);
 }
 
-#if defined(OS_LINUX)
 void NativeWindowViews::OnMouseEvent(ui::MouseEvent* event) {
   if (event->type() != ui::ET_MOUSE_PRESSED)
     return;
 
+  // Alt+Click should not toggle menu bar.
+  root_view_->ResetAltState();
+
+#if defined(OS_LINUX)
   if (event->changed_button_flags() == ui::EF_BACK_MOUSE_BUTTON)
     NotifyWindowExecuteAppCommand(kBrowserBackward);
   else if (event->changed_button_flags() == ui::EF_FORWARD_MOUSE_BUTTON)
     NotifyWindowExecuteAppCommand(kBrowserForward);
-}
 #endif
+}
 
 ui::WindowShowState NativeWindowViews::GetRestoredState() {
-  if (IsMaximized())
+  if (IsMaximized()) {
+#if defined(OS_WIN)
+    // Only restore Maximized state when window is NOT transparent style
+    if (!transparent()) {
+      return ui::SHOW_STATE_MAXIMIZED;
+    }
+#else
     return ui::SHOW_STATE_MAXIMIZED;
+#endif
+  }
+
   if (IsFullscreen())
     return ui::SHOW_STATE_FULLSCREEN;
 

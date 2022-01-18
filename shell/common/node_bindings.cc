@@ -131,6 +131,10 @@ void stop_and_close_uv_loop(uv_loop_t* loop) {
 bool g_is_initialized = false;
 
 bool IsPackagedApp() {
+  auto env = base::Environment::Create();
+  if (env->HasVar("ELECTRON_FORCE_IS_PACKAGED"))
+    return true;
+
   base::FilePath exe_path;
   base::PathService::Get(base::FILE_EXE, &exe_path);
   base::FilePath::StringType base_name =
@@ -485,9 +489,13 @@ node::Environment* NodeBindings::CreateEnvironment(
     // Node.js requires that microtask checkpoints be explicitly invoked.
     is.policy = v8::MicrotasksPolicy::kExplicit;
   } else {
-    // Match Blink's behavior by allowing microtasks invocation to be controlled
-    // by MicrotasksScope objects.
-    is.policy = v8::MicrotasksPolicy::kScoped;
+    // Blink expects the microtasks policy to be kScoped, but Node.js expects it
+    // to be kExplicit. In the renderer, there can be many contexts within the
+    // same isolate, so we don't want to change the existing policy here, which
+    // could be either kExplicit or kScoped depending on whether we're executing
+    // from within a Node.js or a Blink entrypoint. Instead, the policy is
+    // toggled to kExplicit when entering Node.js through UvRunOnce.
+    is.policy = context->GetIsolate()->GetMicrotasksPolicy();
 
     // We do not want to use Node.js' message listener as it interferes with
     // Blink's.
@@ -575,8 +583,13 @@ void NodeBindings::UvRunOnce() {
   // Enter node context while dealing with uv events.
   v8::Context::Scope context_scope(env->context());
 
-  // Perform microtask checkpoint after running JavaScript.
-  gin_helper::MicrotasksScope microtasks_scope(env->isolate());
+  // Node.js expects `kExplicit` microtasks policy and will run microtasks
+  // checkpoints after every call into JavaScript. Since we use a different
+  // policy in the renderer - switch to `kExplicit` and then drop back to the
+  // previous policy value.
+  auto old_policy = env->isolate()->GetMicrotasksPolicy();
+  DCHECK_EQ(v8::MicrotasksScope::GetCurrentDepth(env->isolate()), 0);
+  env->isolate()->SetMicrotasksPolicy(v8::MicrotasksPolicy::kExplicit);
 
   if (browser_env_ != BrowserEnvironment::kBrowser)
     TRACE_EVENT_BEGIN0("devtools.timeline", "FunctionCall");
@@ -586,6 +599,8 @@ void NodeBindings::UvRunOnce() {
 
   if (browser_env_ != BrowserEnvironment::kBrowser)
     TRACE_EVENT_END0("devtools.timeline", "FunctionCall");
+
+  env->isolate()->SetMicrotasksPolicy(old_policy);
 
   if (r == 0)
     base::RunLoop().QuitWhenIdle();  // Quit from uv.

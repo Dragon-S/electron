@@ -753,7 +753,8 @@ Overrides the current application's name.
 
 ### `app.getLocale()`
 
-Returns `String` - The current application locale. Possible return values are documented [here](locales.md).
+Returns `String` - The current application locale, fetched using Chromium's `l10n_util` library.
+Possible return values are documented [here](https://source.chromium.org/chromium/chromium/src/+/master:ui/base/l10n/l10n_util.cc).
 
 To set the locale, you'll want to use a command line switch at app startup, which may be found [here](https://github.com/electron/electron/blob/master/docs/api/command-line-switches.md).
 
@@ -1192,8 +1193,8 @@ badge.
 
 On macOS, it shows on the dock icon. On Linux, it only works for Unity launcher.
 
-**Note:** Unity launcher requires the existence of a `.desktop` file to work,
-for more information please read [Desktop Environment Integration][unity-requirement].
+**Note:** Unity launcher requires a `.desktop` file to work. For more information,
+please read the [Unity integration documentation][unity-requirement].
 
 ### `app.getBadgeCount()` _Linux_ _macOS_
 
@@ -1431,8 +1432,8 @@ An `Integer` property that returns the badge count for current app. Setting the 
 
 On macOS, setting this with any nonzero integer shows on the dock icon. On Linux, this property only works for Unity launcher.
 
-**Note:** Unity launcher requires the existence of a `.desktop` file to work,
-for more information please read [Desktop Environment Integration][unity-requirement].
+**Note:** Unity launcher requires a `.desktop` file to work. For more information,
+please read the [Unity integration documentation][unity-requirement].
 
 **Note:** On macOS, you need to ensure that your application has the permission
 to display notifications for this property to take effect.
@@ -1460,7 +1461,7 @@ A `Boolean` property that returns  `true` if the app is packaged, `false` otherw
 [LSCopyDefaultHandlerForURLScheme]: https://developer.apple.com/library/mac/documentation/Carbon/Reference/LaunchServicesReference/#//apple_ref/c/func/LSCopyDefaultHandlerForURLScheme
 [handoff]: https://developer.apple.com/library/ios/documentation/UserExperience/Conceptual/Handoff/HandoffFundamentals/HandoffFundamentals.html
 [activity-type]: https://developer.apple.com/library/ios/documentation/Foundation/Reference/NSUserActivity_Class/index.html#//apple_ref/occ/instp/NSUserActivity/activityType
-[unity-requirement]: ../tutorial/desktop-environment-integration.md#unity-launcher
+[unity-requirement]: https://help.ubuntu.com/community/UnityLaunchersAndDesktopFiles#Adding_shortcuts_to_a_launcher
 [mas-builds]: ../tutorial/mac-app-store-submission-guide.md
 [Squirrel-Windows]: https://github.com/Squirrel/Squirrel.Windows
 [JumpListBeginListMSDN]: https://msdn.microsoft.com/en-us/library/windows/desktop/dd378398(v=vs.85).aspx

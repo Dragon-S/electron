@@ -3,7 +3,7 @@ import type { BrowserWindowConstructorOptions, LoadURLOptions } from 'electron/m
 
 import * as url from 'url';
 import * as path from 'path';
-import { openGuestWindow, makeWebPreferences } from '@electron/internal/browser/guest-window-manager';
+import { openGuestWindow, makeWebPreferences, parseContentTypeFormat } from '@electron/internal/browser/guest-window-manager';
 import { NavigationController } from '@electron/internal/browser/navigation-controller';
 import { ipcMainInternal } from '@electron/internal/browser/ipc-main-internal';
 import * as ipcMainUtils from '@electron/internal/browser/ipc-main-internal-utils';
@@ -61,7 +61,7 @@ const PDFPageSizes: Record<string, ElectronInternal.MediaSize> = {
     width_microns: 279400,
     custom_display_name: 'Tabloid'
   }
-};
+} as const;
 
 // The minimum micron size Chromium accepts is that where:
 // Per printing/units.h:
@@ -110,7 +110,7 @@ const defaultPrintingSetting = {
   printerType: 2,
   title: undefined as string | undefined,
   url: undefined as string | undefined
-};
+} as const;
 
 // JavaScript implementations of WebContents.
 const binding = process._linkedBinding('electron_browser_web_contents');
@@ -192,7 +192,7 @@ WebContents.prototype.executeJavaScriptInIsolatedWorld = async function (worldId
 
 let pendingPromise: Promise<any> | undefined;
 WebContents.prototype.printToPDF = async function (options) {
-  const printSettings = {
+  const printSettings: Record<string, any> = {
     ...defaultPrintingSetting,
     requestID: getNextId()
   };
@@ -411,11 +411,11 @@ WebContents.prototype.setWindowOpenHandler = function (handler: (details: Electr
   this._windowOpenHandler = handler;
 };
 
-WebContents.prototype._callWindowOpenHandler = function (event: Electron.Event, url: string, frameName: string, rawFeatures: string): BrowserWindowConstructorOptions | null {
+WebContents.prototype._callWindowOpenHandler = function (event: Electron.Event, details: Electron.HandlerDetails): BrowserWindowConstructorOptions | null {
   if (!this._windowOpenHandler) {
     return null;
   }
-  const response = this._windowOpenHandler({ url, frameName, features: rawFeatures });
+  const response = this._windowOpenHandler(details);
 
   if (typeof response !== 'object') {
     event.preventDefault();
@@ -541,6 +541,9 @@ WebContents.prototype._init = function () {
       ipcMainInternal.emit(channel, event, ...args);
     } else {
       addReplyToEvent(event);
+      if (this.listenerCount('ipc-message-sync') === 0 && ipcMain.listenerCount(channel) === 0) {
+        console.warn(`WebContents #${this.id} called ipcRenderer.sendSync() with '${channel}' channel without listeners.`);
+      }
       this.emit('ipc-message-sync', event, channel, ...args);
       ipcMain.emit(channel, event, ...args);
     }
@@ -571,9 +574,21 @@ WebContents.prototype._init = function () {
 
   if (this.getType() !== 'remote') {
     // Make new windows requested by links behave like "window.open".
-    this.on('-new-window' as any, (event: ElectronInternal.Event, url: string, frameName: string, disposition: string,
+    this.on('-new-window' as any, (event: ElectronInternal.Event, url: string, frameName: string, disposition: Electron.HandlerDetails['disposition'],
       rawFeatures: string, referrer: Electron.Referrer, postData: PostData) => {
-      const options = this._callWindowOpenHandler(event, url, frameName, rawFeatures);
+      const postBody = postData ? {
+        data: postData,
+        ...parseContentTypeFormat(postData)
+      } : undefined;
+      const details: Electron.HandlerDetails = {
+        url,
+        frameName,
+        features: rawFeatures,
+        referrer,
+        postBody,
+        disposition
+      };
+      const options = this._callWindowOpenHandler(event, details);
       if (!event.defaultPrevented) {
         openGuestWindow({
           event,
@@ -582,18 +597,26 @@ WebContents.prototype._init = function () {
           referrer,
           postData,
           overrideBrowserWindowOptions: options || {},
-          windowOpenArgs: {
-            url,
-            frameName,
-            features: rawFeatures
-          }
+          windowOpenArgs: details
         });
       }
     });
 
     let windowOpenOverriddenOptions: BrowserWindowConstructorOptions | null = null;
-    this.on('-will-add-new-contents' as any, (event: ElectronInternal.Event, url: string, frameName: string, rawFeatures: string) => {
-      windowOpenOverriddenOptions = this._callWindowOpenHandler(event, url, frameName, rawFeatures);
+    this.on('-will-add-new-contents' as any, (event: ElectronInternal.Event, url: string, frameName: string, rawFeatures: string, disposition: Electron.HandlerDetails['disposition'], referrer: Electron.Referrer, postData: PostData) => {
+      const postBody = postData ? {
+        data: postData,
+        ...parseContentTypeFormat(postData)
+      } : undefined;
+      const details: Electron.HandlerDetails = {
+        url,
+        frameName,
+        features: rawFeatures,
+        disposition,
+        referrer,
+        postBody
+      };
+      windowOpenOverriddenOptions = this._callWindowOpenHandler(event, details);
       if (!event.defaultPrevented) {
         const secureOverrideWebPreferences = windowOpenOverriddenOptions ? {
           // Allow setting of backgroundColor as a webPreference even though
@@ -658,6 +681,14 @@ WebContents.prototype._init = function () {
     }
   });
 
+  this.on('select-bluetooth-device', (event, devices, callback) => {
+    if (this.listenerCount('select-bluetooth-device') === 1) {
+      // Cancel it if there are no handlers
+      event.preventDefault();
+      callback('');
+    }
+  });
+
   const event = process._linkedBinding('electron_browser_event').createEmpty();
   app.emit('web-contents-created', event, this);
 
@@ -701,6 +732,10 @@ export function create (options = {}): Electron.WebContents {
 
 export function fromId (id: string) {
   return binding.fromId(id);
+}
+
+export function fromDevToolsTargetId (targetId: string) {
+  return binding.fromDevToolsTargetId(targetId);
 }
 
 export function getFocusedWebContents () {

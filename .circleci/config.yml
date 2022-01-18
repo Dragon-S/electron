@@ -57,6 +57,16 @@ parameters:
     type: boolean
     default: false
 
+# Executors
+executors:
+  linux-arm:
+    resource_class: electronjs/linux-arm
+    machine: true
+
+  linux-arm64:
+    resource_class: electronjs/linux-arm64
+    machine: true
+
 # The config expects the following environment variables to be set:
 #  - "SLACK_WEBHOOK" Slack hook URL to send notifications.
 #
@@ -239,7 +249,14 @@ step-maybe-cleanup-arm64-mac: &step-maybe-cleanup-arm64-mac
         killall Safari || echo "No Safari processes left running"
         rm -rf ~/Library/Application\ Support/Electron*
         rm -rf ~/Library/Application\ Support/electron*
+      elif [ "$TARGET_ARCH" == "arm" ] || [ "$TARGET_ARCH" == "arm64" ]; then
+        XVFB=/usr/bin/Xvfb
+        /sbin/start-stop-daemon --stop --exec $XVFB || echo "Xvfb not running"
+        pkill electron || echo "electron not running"
+        rm -rf ~/.config/Electron*
+        rm -rf ~/.config/electron*
       fi
+
     when: always
 
 step-checkout-electron: &step-checkout-electron
@@ -278,7 +295,7 @@ step-gclient-sync: &step-gclient-sync
           if ! git diff-index --quiet HEAD --; then
             # There are changes to the patches. Make a git commit with the updated patches
             git add patches
-            GIT_COMMITTER_NAME="Electron Bot" GIT_COMMITTER_EMAIL="electron@github.com" git commit -m "update patches" --author="Electron Bot <electron@github.com>"
+            GIT_COMMITTER_NAME="PatchUp" GIT_COMMITTER_EMAIL="73610968+patchup[bot]@users.noreply.github.com" git commit -m "chore: update patches" --author="PatchUp <73610968+patchup[bot]@users.noreply.github.com>"
             # Export it
             mkdir -p ../../patches
             git format-patch -1 --stdout --keep-subject --no-stat --full-index > ../../patches/update-patches.patch
@@ -325,6 +342,7 @@ step-setup-goma-for-build: &step-setup-goma-for-build
       npm install
       mkdir third_party
       node -e "require('./src/utils/goma.js').downloadAndPrepare({ gomaOneForAll: true })"
+      export GOMA_FALLBACK_ON_AUTH_FAILURE=true
       third_party/goma/goma_ctl.py ensure_start
       echo 'export GN_GOMA_FILE='`node -e "console.log(require('./src/utils/goma.js').gnFilePath)"` >> $BASH_ENV
       echo 'export LOCAL_GOMA_DIR='`node -e "console.log(require('./src/utils/goma.js').dir)"` >> $BASH_ENV
@@ -505,6 +523,7 @@ step-gn-check: &step-gn-check
       gn check out/Default //electron/shell/common/api:mojo
       # Check the hunspell filenames
       node electron/script/gen-hunspell-filenames.js --check
+      node electron/script/gen-libc++-filenames.js --check
 
 step-electron-build: &step-electron-build
   run:
@@ -530,7 +549,10 @@ step-electron-build: &step-electron-build
         ninja -C out/Default electron:electron_mksnapshot_zip -j $NUMBER_OF_NINJA_PROCESSES
         ninja -C out/Default tools/v8_context_snapshot -j $NUMBER_OF_NINJA_PROCESSES
         gn desc out/Default v8:run_mksnapshot_default args > out/Default/mksnapshot_args
+        (cd out/Default; zip mksnapshot.zip mksnapshot_args clang_x64_v8_arm64/gen/v8/embedded.S)
+        rm -rf out/Default/clang_x64_v8_arm64/gen
         rm -rf out/Default/clang_x64_v8_arm64/obj
+        rm -rf out/Default/clang_x64/obj
 
         # Regenerate because we just deleted some ninja files 
         gn gen out/Default --args="import(\"$GN_CONFIG\") import(\"$GN_GOMA_FILE\") $GN_EXTRA_ARGS $GN_BUILDFLAG_ARGS"
@@ -685,6 +707,11 @@ step-persist-data-for-tests: &step-persist-data-for-tests
       - src/third_party/electron_node
       - src/third_party/nan
       - src/cross-arch-snapshots
+      - src/third_party/llvm-build
+      - src/build/linux
+      - src/buildtools/third_party/libc++
+      - src/buildtools/third_party/libc++abi
+      - src/out/Default/obj/buildtools/third_party
 
 step-electron-dist-unzip: &step-electron-dist-unzip
   run:
@@ -754,7 +781,7 @@ step-verify-mksnapshot: &step-verify-mksnapshot
     command: |
       if [ "$IS_ASAN" != "1" ]; then
         cd src
-        if  [ "$TARGET_ARCH" == "arm64" ] &&[ "`uname`" == "Darwin" ]; then
+        if [ "$TARGET_ARCH" == "arm" ] || [ "$TARGET_ARCH" == "arm64" ]; then
           python electron/script/verify-mksnapshot.py --source-root "$PWD" --build-dir out/Default --snapshot-files-dir $PWD/cross-arch-snapshots
         else
           python electron/script/verify-mksnapshot.py --source-root "$PWD" --build-dir out/Default
@@ -835,6 +862,17 @@ step-hunspell-store: &step-hunspell-store
     path: src/out/Default/hunspell_dictionaries.zip
     destination: hunspell_dictionaries.zip
 
+step-maybe-generate-libcxx: &step-maybe-generate-libcxx
+  run:
+    name: maybe generate libcxx
+    command: |
+      cd src
+      if [ "`uname`" == "Linux" ]; then
+        ninja -C out/Default electron:libcxx_headers_zip -j $NUMBER_OF_NINJA_PROCESSES
+        ninja -C out/Default electron:libcxxabi_headers_zip -j $NUMBER_OF_NINJA_PROCESSES
+        ninja -C out/Default electron:libcxx_objects_zip -j $NUMBER_OF_NINJA_PROCESSES
+      fi
+
 step-maybe-generate-breakpad-symbols: &step-maybe-generate-breakpad-symbols
   run:
     name: Generate breakpad symbols
@@ -853,7 +891,7 @@ step-maybe-zip-symbols: &step-maybe-zip-symbols
       export BUILD_PATH="$PWD/out/Default"
       ninja -C out/Default electron:licenses
       ninja -C out/Default electron:electron_version
-      electron/script/zip-symbols.py -b $BUILD_PATH
+      DELETE_DSYMS_AFTER_ZIP=1 electron/script/zip-symbols.py -b $BUILD_PATH
 
 step-symbols-store: &step-symbols-store
   store_artifacts:
@@ -887,28 +925,6 @@ step-maybe-cross-arch-snapshot-store: &step-maybe-cross-arch-snapshot-store
   store_artifacts:
     path: src/cross-arch-snapshots
     destination: cross-arch-snapshots
-
-step-maybe-trigger-arm-test: &step-maybe-trigger-arm-test
-  run:
-    name: Trigger an arm test on VSTS if applicable
-    command: |
-      cd src
-      # Only run for non-fork prs
-      if [ "$TRIGGER_ARM_TEST" == "true" ] && [ -z "$CIRCLE_PR_NUMBER" ]; then
-        #Trigger VSTS job, passing along CircleCI job number and branch to build
-        if [ "`uname`" == "Darwin" ]; then
-          if [ x"$MAS_BUILD" == x"true" ]; then
-            export DEVOPS_BUILD="electron-mas-arm64-testing"
-          else
-            export DEVOPS_BUILD="electron-osx-arm64-testing"
-          fi
-          echo "Triggering $DEVOPS_BUILD build on Azure DevOps"
-          node electron/script/release/ci-release-build.js --job=$DEVOPS_BUILD --ci=DevOps --armTest --circleBuildNum=$CIRCLE_BUILD_NUM $CIRCLE_BRANCH
-        else
-          echo "Triggering electron-$TARGET_ARCH-testing build on VSTS"  
-          node electron/script/release/ci-release-build.js --job=electron-$TARGET_ARCH-testing --ci=VSTS --armTest --circleBuildNum=$CIRCLE_BUILD_NUM $CIRCLE_BRANCH
-        fi
-      fi
 
 step-maybe-generate-typescript-defs: &step-maybe-generate-typescript-defs
   run:
@@ -1324,7 +1340,7 @@ steps-tests: &steps-tests
             (cd electron && node script/yarn test --runners=main --trace-uncaught --enable-logging --files $(circleci tests glob spec-main/*-spec.ts | circleci tests split)) 2>&1 | $ASAN_SYMBOLIZE
             (cd electron && node script/yarn test --runners=remote --trace-uncaught --enable-logging --files $(circleci tests glob spec/*-spec.js | circleci tests split)) 2>&1 | $ASAN_SYMBOLIZE
           else
-            if  [ "$TARGET_ARCH" == "arm64" ] &&[ "`uname`" == "Darwin" ]; then
+            if [ "$TARGET_ARCH" == "arm" ] || [ "$TARGET_ARCH" == "arm64" ]; then
               export ELECTRON_SKIP_NATIVE_MODULE_TESTS=true
               (cd electron && node script/yarn test --runners=main --trace-uncaught --enable-logging)
               (cd electron && node script/yarn test --runners=remote --trace-uncaught --enable-logging)
@@ -1615,9 +1631,6 @@ commands:
                 steps:
                   - *step-save-out-cache
 
-            # Trigger tests on arm hardware if needed
-            - *step-maybe-trigger-arm-test
-
             - *step-maybe-notify-slack-failure
 
   electron-publish:
@@ -1684,6 +1697,9 @@ commands:
       # hunspell
       - *step-hunspell-build
       - *step-hunspell-store
+
+      # libcxx
+      - *step-maybe-generate-libcxx
 
       # typescript defs
       - *step-maybe-generate-typescript-defs
@@ -1958,7 +1974,7 @@ jobs:
       GCLIENT_EXTRA_ARGS: '--custom-var=checkout_arm=True --custom-var=checkout_arm64=True'
     steps:
       - electron-build:
-          persist: false
+          persist: true
           checkout: true
           use-out-cache: false
 
@@ -2017,7 +2033,7 @@ jobs:
       GCLIENT_EXTRA_ARGS: '--custom-var=checkout_arm=True --custom-var=checkout_arm64=True'
     steps:
       - electron-build:
-          persist: false
+          persist: true
           checkout: true
           use-out-cache: false
 
@@ -2414,6 +2430,24 @@ jobs:
       <<: *env-send-slack-notifications
     <<: *steps-verify-ffmpeg
 
+  linux-arm-testing-tests:
+    executor: linux-arm
+    environment:
+      <<: *env-arm
+      <<: *env-global
+      <<: *env-headless-testing
+      <<: *env-stack-dumping
+    <<: *steps-tests
+
+  linux-arm64-testing-tests:
+    executor: linux-arm64
+    environment:
+      <<: *env-arm64
+      <<: *env-global
+      <<: *env-headless-testing
+      <<: *env-stack-dumping
+    <<: *steps-tests
+
   osx-testing-x64-tests:
     <<: *machine-mac-large
     environment:
@@ -2610,15 +2644,19 @@ workflows:
     - osx-publish-x64-skip-checkout:
         requires:
           - mac-checkout
+        context: release-env
     - mas-publish-x64-skip-checkout:
         requires:
           - mac-checkout
+        context: release-env
     - osx-publish-arm64-skip-checkout:
         requires:
           - mac-checkout
+        context: release-env
     - mas-publish-arm64-skip-checkout:
         requires:
           - mac-checkout
+        context: release-env
 
   lint:
     when: << pipeline.parameters.run-lint >>
@@ -2662,8 +2700,23 @@ workflows:
             - linux-ia32-testing
 
       - linux-arm-testing
+      - linux-arm-testing-tests:
+          filters:
+            branches:
+              # Do not run this on forked pull requests
+              ignore: /pull\/[0-9]+/        
+          requires:
+            - linux-arm-testing      
 
       - linux-arm64-testing
+      - linux-arm64-testing-tests:
+          filters:
+            branches:
+              # Do not run this on forked pull requests
+              ignore: /pull\/[0-9]+/        
+          requires:
+            - linux-arm64-testing
+
       - linux-arm64-testing-gn-check:
           requires:
             - linux-checkout-fast

@@ -59,7 +59,12 @@ const NSAutoresizingMaskOptions kDefaultAutoResizingMask =
 }
 
 - (BOOL)mouseDownCanMoveWindow {
-  return NO;
+  return
+      [self.window respondsToSelector:@selector(performWindowDragWithEvent:)];
+}
+
+- (BOOL)acceptsFirstMouse:(NSEvent*)event {
+  return YES;
 }
 
 - (BOOL)shouldIgnoreMouseEvent {
@@ -81,16 +86,15 @@ const NSAutoresizingMaskOptions kDefaultAutoResizingMask =
 - (void)mouseDown:(NSEvent*)event {
   [super mouseDown:event];
 
-  if ([self.window respondsToSelector:@selector(performWindowDragWithEvent)]) {
+  if ([self.window respondsToSelector:@selector(performWindowDragWithEvent:)]) {
     // According to Google, using performWindowDragWithEvent:
     // does not generate a NSWindowWillMoveNotification. Hence post one.
     [[NSNotificationCenter defaultCenter]
         postNotificationName:NSWindowWillMoveNotification
                       object:self];
 
-    if (@available(macOS 10.11, *)) {
-      [self.window performWindowDragWithEvent:event];
-    }
+    [self.window performWindowDragWithEvent:event];
+
     return;
   }
 
@@ -102,7 +106,7 @@ const NSAutoresizingMaskOptions kDefaultAutoResizingMask =
 }
 
 - (void)mouseDragged:(NSEvent*)event {
-  if ([self.window respondsToSelector:@selector(performWindowDragWithEvent)]) {
+  if ([self.window respondsToSelector:@selector(performWindowDragWithEvent:)]) {
     return;
   }
 
@@ -347,9 +351,7 @@ void NativeBrowserViewMac::UpdateDraggableRegions(
 
   std::vector<gfx::Rect> drag_exclude_rects;
   if (draggable_regions_.empty()) {
-    const auto bounds = GetBounds();
-    drag_exclude_rects.emplace_back(bounds.x(), bounds.y(), webViewWidth,
-                                    webViewHeight);
+    drag_exclude_rects.emplace_back(0, 0, webViewWidth, webViewHeight);
   } else {
     drag_exclude_rects = CalculateNonDraggableRegions(
         DraggableRegionsToSkRegion(draggable_regions_), webViewWidth,

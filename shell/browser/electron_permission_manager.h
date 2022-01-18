@@ -13,6 +13,7 @@
 #include "base/containers/id_map.h"
 #include "base/values.h"
 #include "content/public/browser/permission_controller_delegate.h"
+#include "gin/dictionary.h"
 
 namespace content {
 class WebContents;
@@ -43,24 +44,24 @@ class ElectronPermissionManager : public content::PermissionControllerDelegate {
   void SetPermissionCheckHandler(const CheckHandler& handler);
 
   // content::PermissionControllerDelegate:
-  int RequestPermission(content::PermissionType permission,
-                        content::RenderFrameHost* render_frame_host,
-                        const GURL& requesting_origin,
-                        bool user_gesture,
-                        StatusCallback callback) override;
-  int RequestPermissionWithDetails(content::PermissionType permission,
-                                   content::RenderFrameHost* render_frame_host,
-                                   const GURL& requesting_origin,
-                                   bool user_gesture,
-                                   const base::DictionaryValue* details,
-                                   StatusCallback callback);
-  int RequestPermissions(
+  void RequestPermission(content::PermissionType permission,
+                         content::RenderFrameHost* render_frame_host,
+                         const GURL& requesting_origin,
+                         bool user_gesture,
+                         StatusCallback callback) override;
+  void RequestPermissionWithDetails(content::PermissionType permission,
+                                    content::RenderFrameHost* render_frame_host,
+                                    const GURL& requesting_origin,
+                                    bool user_gesture,
+                                    const base::DictionaryValue* details,
+                                    StatusCallback callback);
+  void RequestPermissions(
       const std::vector<content::PermissionType>& permissions,
       content::RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
       bool user_gesture,
       StatusesCallback callback) override;
-  int RequestPermissionsWithDetails(
+  void RequestPermissionsWithDetails(
       const std::vector<content::PermissionType>& permissions,
       content::RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
@@ -77,6 +78,16 @@ class ElectronPermissionManager : public content::PermissionControllerDelegate {
                                   const GURL& requesting_origin,
                                   const base::DictionaryValue* details) const;
 
+  bool CheckDevicePermission(content::PermissionType permission,
+                             const url::Origin& origin,
+                             const base::Value* object,
+                             content::RenderFrameHost* render_frame_host) const;
+
+  void GrantDevicePermission(content::PermissionType permission,
+                             const url::Origin& origin,
+                             const base::Value* object,
+                             content::RenderFrameHost* render_frame_host) const;
+
  protected:
   void OnPermissionResponse(int request_id,
                             int permission_id,
@@ -90,13 +101,13 @@ class ElectronPermissionManager : public content::PermissionControllerDelegate {
       content::PermissionType permission,
       const GURL& requesting_origin,
       const GURL& embedding_origin) override;
-  int SubscribePermissionStatusChange(
+  SubscriptionId SubscribePermissionStatusChange(
       content::PermissionType permission,
       content::RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
       base::RepeatingCallback<void(blink::mojom::PermissionStatus)> callback)
       override;
-  void UnsubscribePermissionStatusChange(int subscription_id) override;
+  void UnsubscribePermissionStatusChange(SubscriptionId id) override;
 
  private:
   class PendingRequest;
