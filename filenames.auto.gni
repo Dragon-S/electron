@@ -197,6 +197,8 @@ auto_filenames = {
     "lib/browser/api/browser-window.ts",
     "lib/browser/api/content-tracing.ts",
     "lib/browser/api/crash-reporter.ts",
+    "lib/browser/api/desktop-capturer-expand.ts",
+    "lib/browser/api/desktop-capturer-expand/desktop-capturer-expand-native.ts",
     "lib/browser/api/desktop-capturer.ts",
     "lib/browser/api/dialog.ts",
     "lib/browser/api/exports/electron.ts",
