@@ -13,7 +13,6 @@
 #include "gin/handle.h"
 #include "gin/wrappable.h"
 #include "shell/browser/event_emitter_mixin.h"
-#include "ui/display/screen.h"
 
 namespace electron {
 
@@ -41,8 +40,6 @@ class DesktopCapturerExpand
  private:
   void StartObserving();
   void StopObserving();
-
-  display::Screen* screen_;
 
   DISALLOW_COPY_AND_ASSIGN(DesktopCapturerExpand);
 };

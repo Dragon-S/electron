@@ -20,8 +20,6 @@
 #include "shell/common/node_includes.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_capture_options.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_capturer.h"
-#include "ui/display/display.h"
-#include "ui/display/screen.h"
 
 #if defined(OS_WIN)
 #include "ui/display/win/screen_win.h"
@@ -34,9 +32,7 @@ namespace api {
 gin::WrapperInfo DesktopCapturerExpand::kWrapperInfo = {
     gin::kEmbedderNativeGin};
 
-DesktopCapturerExpand::DesktopCapturerExpand(v8::Isolate* isolate) {
-  screen_ = display::Screen::GetScreen();
-}
+DesktopCapturerExpand::DesktopCapturerExpand(v8::Isolate* isolate) {}
 
 DesktopCapturerExpand::~DesktopCapturerExpand() = default;
 
@@ -55,24 +51,13 @@ void DesktopCapturerExpand::StopObserving() {
 }
 
 void DesktopCapturerExpand::OnMediaFrameBoundChanged(const gfx::Rect& bound) {
-  if (!screen_) {
-    screen_ = display::Screen::GetScreen();
-  }
+  gfx::Rect new_bounds = bound;
 
-  if (screen_) {
 #if defined(OS_WIN)
-    gfx::Rect display_bounds =
-        display::win::ScreenWin::ScreenToDIPRect(nullptr, bound);
-    Emit("media-frame-bound-changed", display_bounds);
-#else
-    display::Display display = screen_->GetDisplayMatching(bound);
-    float device_scale_factor = display.device_scale_factor();
-    gfx::Rect new_bounds = bound;
-    new_bounds.set_width(bound.width() / device_scale_factor);
-    new_bounds.set_height(bound.height() / device_scale_factor);
-    Emit("media-frame-bound-changed", new_bounds);
+  new_bounds = display::win::ScreenWin::ScreenToDIPRect(nullptr, bound);
 #endif
-  }
+
+  Emit("media-frame-bound-changed", new_bounds);
 }
 
 // static
