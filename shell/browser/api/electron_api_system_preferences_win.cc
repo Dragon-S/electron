@@ -262,6 +262,10 @@ void SystemPreferences::OnFinishLaunching(
   color_change_listener_.reset(new gfx::ScopedSysColorChangeListener(this));
 }
 
+void SystemPreferences::OpenMirrorMode() {}
+
+void SystemPreferences::CloseMirrorMode() {}
+
 }  // namespace api
 
 }  // namespace electron

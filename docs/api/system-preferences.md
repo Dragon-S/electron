@@ -449,6 +449,14 @@ Returns `Object`:
 
 Returns an object with system animation settings.
 
+### `systemPreferences.openMirrorMode()` _Windows_ _macOS_
+
+Turn on display mirroring mode
+
+### `systemPreferences.closeMirrorMode()` _Windows_ _macOS_
+
+Turn off display mirroring mode
+
 ## Properties
 
 ### `systemPreferences.appLevelAppearance` _macOS_
