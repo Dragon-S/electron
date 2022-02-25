@@ -74,6 +74,10 @@ gin::ObjectTemplateBuilder SystemPreferences::GetObjectTemplateBuilder(
       .SetMethod("getAccentColor", &SystemPreferences::GetAccentColor)
       .SetMethod("getMediaAccessStatus",
                  &SystemPreferences::GetMediaAccessStatus)
+      .SetMethod("openMirrorMode",
+                 &SystemPreferences::OpenMirrorMode)
+      .SetMethod("closeMirrorMode",
+                 &SystemPreferences::CloseMirrorMode)
 #endif
 
 #if defined(OS_WIN)

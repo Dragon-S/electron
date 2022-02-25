@@ -13,6 +13,8 @@
 #import <Cocoa/Cocoa.h>
 #import <LocalAuthentication/LocalAuthentication.h>
 #import <Security/Security.h>
+#import <Foundation/Foundation.h>
+#import <CoreGraphics/CoreGraphics.h>
 
 #include "base/mac/scoped_cftyperef.h"
 #include "base/mac/sdk_forward_declarations.h"
@@ -120,6 +122,81 @@ std::string ConvertSystemPermission(
       return "granted";
     default:
       return "unknown";
+  }
+}
+
+
+#define MAX_DISPLAYS 10
+#define SECONDARY_DISPLAY_COUNT 9
+
+static CGDisplayCount numberOfTotalDspys = MAX_DISPLAYS;
+
+static CGDirectDisplayID activeDspys[MAX_DISPLAYS];
+static CGDirectDisplayID onlineDspys[MAX_DISPLAYS];
+static CGDirectDisplayID secondaryDspys[SECONDARY_DISPLAY_COUNT];
+
+CGError multiConfigureDisplays(CGDisplayConfigRef configRef,
+                              CGDirectDisplayID *secondaryDspys,
+                              int count, CGDirectDisplayID master) {
+  CGError error = kCGErrorSuccess;
+  for (int i = 0; i < count; i++) {
+    error = CGConfigureDisplayMirrorOfDisplay(configRef, secondaryDspys[i], master);
+  }
+  return error;
+}
+
+void SetMirrored(bool mirrored) {
+  CGDisplayCount numberOfActiveDspys;
+  CGDisplayCount numberOfOnlineDspys;
+
+  CGDisplayErr activeError =
+      CGGetActiveDisplayList(numberOfTotalDspys, activeDspys, &numberOfActiveDspys);
+  if (activeError != 0) {
+    printf("Error in obtaining active diplay list: %d\n",activeError);
+    return;
+  }
+
+  CGDisplayErr onlineError =
+      CGGetOnlineDisplayList(numberOfTotalDspys, onlineDspys, &numberOfOnlineDspys);
+  if (onlineError != 0) {
+    printf("Error in obtaining online diplay list: %d\n",onlineError);
+    return;
+  }
+
+  if (numberOfOnlineDspys < 2) {
+    printf("No secondary display detected.\n");
+    return;
+  }
+
+  bool displaysMirrored = CGDisplayIsInMirrorSet(CGMainDisplayID());
+  int secondaryDisplayIndex = 0;
+  for (int displayIndex = 0; displayIndex < (int)numberOfOnlineDspys; displayIndex++) {
+    if (onlineDspys[displayIndex] != CGMainDisplayID()) {
+        secondaryDspys[secondaryDisplayIndex] = onlineDspys[displayIndex];
+        secondaryDisplayIndex++;
+    }
+  }
+
+  CGDisplayConfigRef configRef;
+  CGError err = CGBeginDisplayConfiguration(&configRef);
+  if (err != 0) {
+    printf("Error with CGBeginDisplayConfiguration: %d\n",err);
+    return;
+  }
+
+  if (mirrored && !displaysMirrored) {
+    err = multiConfigureDisplays(configRef, secondaryDspys, numberOfOnlineDspys - 1, CGMainDisplayID());
+  } else if (!mirrored && displaysMirrored) {
+    err = multiConfigureDisplays(configRef, secondaryDspys, numberOfOnlineDspys - 1, kCGNullDirectDisplay);
+  }
+  if (err != 0) {
+    printf("Error configuring displays: %d\n", err);
+  }
+
+  // Apply the changes
+  err = CGCompleteDisplayConfiguration (configRef, kCGConfigurePermanently);
+  if (err != 0) {
+    printf("Error applying configuration: %d\n",err);
   }
 }
 
@@ -667,6 +744,14 @@ void SystemPreferences::SetAppLevelAppearance(gin::Arguments* args) {
       args->ThrowError();
     }
   }
+}
+
+void SystemPreferences::OpenMirrorMode() {
+  SetMirrored(true);
+}
+
+void SystemPreferences::CloseMirrorMode() {
+  SetMirrored(false);
 }
 
 }  // namespace api

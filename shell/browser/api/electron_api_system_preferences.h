@@ -57,6 +57,8 @@ class SystemPreferences
                        const std::string& color);
   std::string GetMediaAccessStatus(gin_helper::ErrorThrower thrower,
                                    const std::string& media_type);
+  void OpenMirrorMode();
+  void CloseMirrorMode();
 #endif
 #if defined(OS_WIN)
   bool IsAeroGlassEnabled();
