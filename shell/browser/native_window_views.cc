@@ -1025,7 +1025,9 @@ double NativeWindowViews::GetOpacity() {
   return opacity_;
 }
 
-void NativeWindowViews::SetIgnoreMouseEvents(bool ignore, bool forward) {
+void NativeWindowViews::SetIgnoreMouseEvents(bool ignore,
+                                             bool forward,
+                                             bool flag) {
 #if defined(OS_WIN)
   LONG ex_style = ::GetWindowLong(GetAcceleratedWidget(), GWL_EXSTYLE);
   if (ignore)
@@ -1040,7 +1042,7 @@ void NativeWindowViews::SetIgnoreMouseEvents(bool ignore, bool forward) {
   if (!ignore) {
     SetForwardMouseMessages(false);
   } else {
-    SetForwardMouseMessages(forward);
+    SetForwardMouseMessages(forward, flag);
   }
 #elif defined(USE_X11)
   if (!features::IsUsingOzonePlatform()) {
