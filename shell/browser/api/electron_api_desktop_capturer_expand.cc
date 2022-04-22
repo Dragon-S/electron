@@ -37,14 +37,12 @@ DesktopCapturerExpand::DesktopCapturerExpand(v8::Isolate* isolate) {}
 DesktopCapturerExpand::~DesktopCapturerExpand() = default;
 
 void DesktopCapturerExpand::StartObserving() {
-  LOG(ERROR) << "sll-------StartObserving";
   NativeDesktopMediaFrameBoundIndicator* media_frame_bound_indicator =
       NativeDesktopMediaFrameBoundIndicator::GetInstance();
   media_frame_bound_indicator->StartObserving(this);
 }
 
 void DesktopCapturerExpand::StopObserving() {
-  LOG(ERROR) << "sll-------StopObserving";
   NativeDesktopMediaFrameBoundIndicator* media_frame_bound_indicator =
       NativeDesktopMediaFrameBoundIndicator::GetInstance();
   media_frame_bound_indicator->StopObserving();
