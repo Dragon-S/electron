@@ -99,6 +99,7 @@ class BaseWindow : public gin_helper::TrackableObject<BaseWindow>,
   void ShowInactive();
   void Hide();
   bool IsVisible();
+  bool IsEntirelyCovered();
   bool IsEnabled();
   void SetEnabled(bool enable);
   void Maximize();

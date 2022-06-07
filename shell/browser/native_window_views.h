@@ -57,6 +57,7 @@ class NativeWindowViews : public NativeWindow,
   void ShowInactive() override;
   void Hide() override;
   bool IsVisible() override;
+  bool IsEntirelyCovered() override;
   bool IsEnabled() override;
   void SetEnabled(bool enable) override;
   void Maximize() override;
