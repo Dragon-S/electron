@@ -175,6 +175,7 @@ bool IsScreenReaderActive() {
 
 std::set<NativeWindowViews*> NativeWindowViews::forwarding_windows_;
 HHOOK NativeWindowViews::mouse_hook_ = NULL;
+bool NativeWindowViews::mouse_drag_event_ = false;
 
 void NativeWindowViews::Maximize() {
   // Only use Maximize() when window is NOT transparent style
@@ -452,7 +453,7 @@ void NativeWindowViews::HandleSizeEvent(WPARAM w_param, LPARAM l_param) {
   }
 }
 
-void NativeWindowViews::SetForwardMouseMessages(bool forward) {
+void NativeWindowViews::SetForwardMouseMessages(bool forward, bool flag) {
   if (forward && !forwarding_mouse_messages_) {
     forwarding_mouse_messages_ = true;
     forwarding_windows_.insert(this);
@@ -463,7 +464,11 @@ void NativeWindowViews::SetForwardMouseMessages(bool forward) {
                       reinterpret_cast<DWORD_PTR>(this));
 
     if (!mouse_hook_) {
-      mouse_hook_ = SetWindowsHookEx(WH_MOUSE_LL, MouseHookProc, NULL, 0);
+      if (flag) {
+        mouse_hook_ = SetWindowsHookEx(WH_MOUSE_LL, MouseHookProcEx, NULL, 0);
+      } else {
+        mouse_hook_ = SetWindowsHookEx(WH_MOUSE_LL, MouseHookProc, NULL, 0);
+      }
     }
   } else if (!forward && forwarding_mouse_messages_) {
     forwarding_mouse_messages_ = false;
@@ -533,6 +538,41 @@ LRESULT CALLBACK NativeWindowViews::MouseHookProc(int n_code,
         PostMessage(window->legacy_window_, WM_MOUSEMOVE, w, l);
       }
     }
+  }
+
+  return CallNextHookEx(NULL, n_code, w_param, l_param);
+}
+
+LRESULT CALLBACK NativeWindowViews::MouseHookProcEx(int n_code,
+                                                    WPARAM w_param,
+                                                    LPARAM l_param) {
+  if (n_code < 0) {
+    return CallNextHookEx(NULL, n_code, w_param, l_param);
+  }
+
+  // Post a WM_MOUSEMOVE message for those windows whose client area contains
+  // the cursor since they are in a state where they would otherwise ignore all
+  // mouse input.
+  if (w_param == WM_MOUSEMOVE && !mouse_drag_event_) {
+    for (auto* window : forwarding_windows_) {
+      // At first I considered enumerating windows to check whether the cursor
+      // was directly above the window, but since nothing bad seems to happen
+      // if we post the message even if some other window occludes it I have
+      // just left it as is.
+      RECT client_rect;
+      GetClientRect(window->legacy_window_, &client_rect);
+      POINT p = reinterpret_cast<MSLLHOOKSTRUCT*>(l_param)->pt;
+      ScreenToClient(window->legacy_window_, &p);
+      if (PtInRect(&client_rect, p)) {
+        WPARAM w = 0;  // No virtual keys pressed for our purposes
+        LPARAM l = MAKELPARAM(p.x, p.y);
+        PostMessage(window->legacy_window_, WM_MOUSEMOVE, w, l);
+      }
+    }
+  } else if (w_param == WM_LBUTTONDOWN) {
+    mouse_drag_event_ = true;
+  } else if (w_param == WM_LBUTTONUP) {
+    mouse_drag_event_ = false;
   }
 
   return CallNextHookEx(NULL, n_code, w_param, l_param);
