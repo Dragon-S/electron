@@ -586,6 +586,11 @@ bool NativeWindowMac::IsVisible() {
   return [window_ isVisible] && !occluded && !IsMinimized();
 }
 
+// 此接口只支持Windows，mac 永远返回false
+bool NativeWindowMac::IsEntirelyCovered() {
+  return false;
+}
+
 void NativeWindowMac::SetFullScreenTransitionState(
     FullScreenTransitionState state) {
   fullscreen_transition_state_ = state;
