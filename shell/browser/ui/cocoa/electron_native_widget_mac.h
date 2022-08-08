@@ -5,6 +5,8 @@
 #ifndef SHELL_BROWSER_UI_COCOA_ELECTRON_NATIVE_WIDGET_MAC_H_
 #define SHELL_BROWSER_UI_COCOA_ELECTRON_NATIVE_WIDGET_MAC_H_
 
+#include <string>
+
 #include "ui/views/widget/native_widget_mac.h"
 
 namespace electron {
@@ -14,6 +16,7 @@ class NativeWindowMac;
 class ElectronNativeWidgetMac : public views::NativeWidgetMac {
  public:
   ElectronNativeWidgetMac(NativeWindowMac* shell,
+                          const std::string& window_type,
                           NSUInteger style_mask,
                           views::internal::NativeWidgetDelegate* delegate);
   ~ElectronNativeWidgetMac() override;
@@ -25,6 +28,7 @@ class ElectronNativeWidgetMac : public views::NativeWidgetMac {
 
  private:
   NativeWindowMac* shell_;
+  std::string window_type_;
   NSUInteger style_mask_;
 
   DISALLOW_COPY_AND_ASSIGN(ElectronNativeWidgetMac);

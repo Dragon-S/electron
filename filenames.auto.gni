@@ -16,6 +16,7 @@ auto_filenames = {
     "docs/api/cookies.md",
     "docs/api/crash-reporter.md",
     "docs/api/debugger.md",
+    "docs/api/desktop-capturer-expand.md",
     "docs/api/desktop-capturer.md",
     "docs/api/dialog.md",
     "docs/api/dock.md",
