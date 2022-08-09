@@ -4323,6 +4323,14 @@ describe('BrowserWindow module', () => {
         await createTwo();
       });
 
+      ifit(process.platform !== 'darwin')('can disable and enable a window', () => {
+        const w = new BrowserWindow({ show: false });
+        w.setEnabled(false);
+        expect(w.isEnabled()).to.be.false('w.isEnabled()');
+        w.setEnabled(true);
+        expect(w.isEnabled()).to.be.true('!w.isEnabled()');
+      });
+
       ifit(process.platform !== 'darwin')('disables parent window', () => {
         const w = new BrowserWindow({ show: false });
         const c = new BrowserWindow({ show: false, parent: w, modal: true });
@@ -4892,18 +4900,34 @@ describe('BrowserWindow module', () => {
     });
 
     ifdescribe(process.platform === 'darwin')('fullscreen state with resizable set', () => {
-      it('resizable flag should be set to true and restored', async () => {
+      it('resizable flag should be set to false and restored', async () => {
         const w = new BrowserWindow({ resizable: false });
+
         const enterFullScreen = emittedOnce(w, 'enter-full-screen');
         w.setFullScreen(true);
         await enterFullScreen;
-        expect(w.resizable).to.be.true('resizable');
+        expect(w.resizable).to.be.false('resizable');
 
         await delay();
         const leaveFullScreen = emittedOnce(w, 'leave-full-screen');
         w.setFullScreen(false);
         await leaveFullScreen;
         expect(w.resizable).to.be.false('resizable');
+      });
+
+      it('default resizable flag should be restored after entering/exiting fullscreen', async () => {
+        const w = new BrowserWindow();
+
+        const enterFullScreen = emittedOnce(w, 'enter-full-screen');
+        w.setFullScreen(true);
+        await enterFullScreen;
+        expect(w.resizable).to.be.false('resizable');
+
+        await delay();
+        const leaveFullScreen = emittedOnce(w, 'leave-full-screen');
+        w.setFullScreen(false);
+        await leaveFullScreen;
+        expect(w.resizable).to.be.true('resizable');
       });
     });
 
@@ -4914,6 +4938,23 @@ describe('BrowserWindow module', () => {
         const enterFullScreen = emittedOnce(w, 'enter-full-screen');
         w.setFullScreen(true);
         await enterFullScreen;
+
+        await delay();
+
+        const leaveFullScreen = emittedOnce(w, 'leave-full-screen');
+        w.setFullScreen(false);
+        await leaveFullScreen;
+      });
+
+      it('should be able to load a URL while transitioning to fullscreen', async () => {
+        const w = new BrowserWindow({ fullscreen: true });
+        w.loadFile(path.join(fixtures, 'pages', 'c.html'));
+
+        const load = emittedOnce(w.webContents, 'did-finish-load');
+        const enterFS = emittedOnce(w, 'enter-full-screen');
+
+        await Promise.all([enterFS, load]);
+        expect(w.fullScreen).to.be.true();
 
         await delay();
 
@@ -4957,19 +4998,80 @@ describe('BrowserWindow module', () => {
         expect(w.isFullScreen()).to.be.false('is fullscreen');
       });
 
+      it('handles several HTML fullscreen transitions', async () => {
+        const w = new BrowserWindow();
+        await w.loadFile(path.join(fixtures, 'pages', 'a.html'));
+
+        expect(w.isFullScreen()).to.be.false('is fullscreen');
+
+        const enterFullScreen = emittedOnce(w, 'enter-full-screen');
+        const leaveFullScreen = emittedOnce(w, 'leave-full-screen');
+
+        await w.webContents.executeJavaScript('document.getElementById("div").requestFullscreen()', true);
+        await enterFullScreen;
+        await w.webContents.executeJavaScript('document.exitFullscreen()', true);
+        await leaveFullScreen;
+
+        expect(w.isFullScreen()).to.be.false('is fullscreen');
+
+        await delay();
+
+        await w.webContents.executeJavaScript('document.getElementById("div").requestFullscreen()', true);
+        await enterFullScreen;
+        await w.webContents.executeJavaScript('document.exitFullscreen()', true);
+        await leaveFullScreen;
+
+        expect(w.isFullScreen()).to.be.false('is fullscreen');
+      });
+
       it('handles several transitions in close proximity', async () => {
         const w = new BrowserWindow();
 
         expect(w.isFullScreen()).to.be.false('is fullscreen');
 
+        const enterFS = emittedNTimes(w, 'enter-full-screen', 2);
+        const leaveFS = emittedNTimes(w, 'leave-full-screen', 2);
+
         w.setFullScreen(true);
         w.setFullScreen(false);
         w.setFullScreen(true);
+        w.setFullScreen(false);
 
-        const enterFullScreen = emittedNTimes(w, 'enter-full-screen', 2);
-        await enterFullScreen;
+        await Promise.all([enterFS, leaveFS]);
 
-        expect(w.isFullScreen()).to.be.true('not fullscreen');
+        expect(w.isFullScreen()).to.be.false('not fullscreen');
+      });
+
+      it('handles several chromium-initiated transitions in close proximity', async () => {
+        const w = new BrowserWindow();
+        await w.loadFile(path.join(fixtures, 'pages', 'a.html'));
+
+        expect(w.isFullScreen()).to.be.false('is fullscreen');
+
+        let enterCount = 0;
+        let exitCount = 0;
+
+        const done = new Promise<void>(resolve => {
+          const checkDone = () => {
+            if (enterCount === 2 && exitCount === 2) resolve();
+          };
+
+          w.webContents.on('enter-html-full-screen', () => {
+            enterCount++;
+            checkDone();
+          });
+
+          w.webContents.on('leave-html-full-screen', () => {
+            exitCount++;
+            checkDone();
+          });
+        });
+
+        await w.webContents.executeJavaScript('document.getElementById("div").requestFullscreen()', true);
+        await w.webContents.executeJavaScript('document.exitFullscreen()');
+        await w.webContents.executeJavaScript('document.getElementById("div").requestFullscreen()', true);
+        await w.webContents.executeJavaScript('document.exitFullscreen()');
+        await done;
       });
 
       it('does not crash when exiting simpleFullScreen (properties)', async () => {

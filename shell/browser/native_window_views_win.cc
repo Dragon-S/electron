@@ -416,6 +416,7 @@ void NativeWindowViews::HandleSizeEvent(WPARAM w_param, LPARAM l_param) {
           last_window_state_ != ui::SHOW_STATE_MAXIMIZED) {
         last_window_state_ = ui::SHOW_STATE_MAXIMIZED;
         NotifyWindowMaximize();
+        ResetWindowControls();
       } else if (w_param == SIZE_MINIMIZED &&
                  last_window_state_ != ui::SHOW_STATE_MINIMIZED) {
         last_window_state_ = ui::SHOW_STATE_MINIMIZED;

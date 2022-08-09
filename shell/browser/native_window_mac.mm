@@ -483,7 +483,8 @@ void NativeWindowMac::Close() {
   // [window_ performClose:nil], the window won't close properly
   // even after the user has ended the sheet.
   // Ensure it's closed before calling [window_ performClose:nil].
-  SetEnabled(true);
+  if ([window_ attachedSheet])
+    [window_ endSheet:[window_ attachedSheet]];
 
   [window_ performClose:nil];
 
@@ -553,7 +554,8 @@ void NativeWindowMac::Hide() {
   // If a sheet is attached to the window when we call [window_ orderOut:nil],
   // the sheet won't be able to show again on the same window.
   // Ensure it's closed before calling [window_ orderOut:nil].
-  SetEnabled(true);
+  if ([window_ attachedSheet])
+    [window_ endSheet:[window_ attachedSheet]];
 
   if (is_modal() && parent()) {
     [window_ orderOut:nil];
@@ -602,9 +604,18 @@ bool NativeWindowMac::IsEnabled() {
 
 void NativeWindowMac::SetEnabled(bool enable) {
   if (!enable) {
-    [window_ beginSheet:window_
+    NSRect frame = [window_ frame];
+    NSWindow* window =
+        [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, frame.size.width,
+                                                         frame.size.height)
+                                    styleMask:NSWindowStyleMaskTitled
+                                      backing:NSBackingStoreBuffered
+                                        defer:NO];
+    [window setAlphaValue:0.5];
+
+    [window_ beginSheet:window
         completionHandler:^(NSModalResponse returnCode) {
-          NSLog(@"modal enabled");
+          NSLog(@"main window disabled");
           return;
         }];
   } else if ([window_ attachedSheet]) {
@@ -651,7 +662,7 @@ void NativeWindowMac::Unmaximize() {
 }
 
 bool NativeWindowMac::IsMaximized() {
-  if (([window_ styleMask] & NSWindowStyleMaskResizable) != 0)
+  if (HasStyleMask(NSWindowStyleMaskResizable) != 0)
     return [window_ isZoomed];
 
   NSRect rectScreen = GetAspectRatio() > 0.0
@@ -677,15 +688,6 @@ void NativeWindowMac::Restore() {
 
 bool NativeWindowMac::IsMinimized() {
   return [window_ isMiniaturized];
-}
-
-void NativeWindowMac::HandlePendingFullscreenTransitions() {
-  if (pending_transitions_.empty())
-    return;
-
-  bool next_transition = pending_transitions_.front();
-  pending_transitions_.pop();
-  SetFullScreen(next_transition);
 }
 
 bool NativeWindowMac::HandleDeferredClose() {
@@ -734,7 +736,7 @@ void NativeWindowMac::SetFullScreen(bool fullscreen) {
 }
 
 bool NativeWindowMac::IsFullscreen() const {
-  return [window_ styleMask] & NSWindowStyleMaskFullScreen;
+  return HasStyleMask(NSWindowStyleMaskFullScreen);
 }
 
 void NativeWindowMac::SetBounds(const gfx::Rect& bounds, bool animate) {
@@ -835,7 +837,10 @@ void NativeWindowMac::SetResizable(bool resizable) {
 }
 
 bool NativeWindowMac::IsResizable() {
-  return [window_ styleMask] & NSWindowStyleMaskResizable;
+  bool in_fs_transition =
+      fullscreen_transition_state() != FullScreenTransitionState::NONE;
+  bool has_rs_mask = HasStyleMask(NSWindowStyleMaskResizable);
+  return has_rs_mask && !IsFullscreen() && !in_fs_transition;
 }
 
 void NativeWindowMac::SetMovable(bool movable) {
@@ -851,7 +856,7 @@ void NativeWindowMac::SetMinimizable(bool minimizable) {
 }
 
 bool NativeWindowMac::IsMinimizable() {
-  return [window_ styleMask] & NSMiniaturizableWindowMask;
+  return HasStyleMask(NSWindowStyleMaskMiniaturizable);
 }
 
 void NativeWindowMac::SetMaximizable(bool maximizable) {
@@ -881,7 +886,7 @@ void NativeWindowMac::SetClosable(bool closable) {
 }
 
 bool NativeWindowMac::IsClosable() {
-  return [window_ styleMask] & NSWindowStyleMaskClosable;
+  return HasStyleMask(NSWindowStyleMaskClosable);
 }
 
 void NativeWindowMac::SetAlwaysOnTop(ui::ZOrderLevel z_order,
@@ -1396,8 +1401,7 @@ void NativeWindowMac::UpdateVibrancyRadii(bool fullscreen) {
   NSVisualEffectView* vibrantView = [window_ vibrantView];
 
   if (vibrantView != nil && !vibrancy_type_.empty()) {
-    const bool no_rounded_corner =
-        !([window_ styleMask] & NSWindowStyleMaskTitled);
+    const bool no_rounded_corner = !HasStyleMask(NSWindowStyleMaskTitled);
     if (!has_frame() && !is_modal() && !no_rounded_corner) {
       CGFloat radius;
       if (fullscreen) {
@@ -1770,6 +1774,10 @@ void NativeWindowMac::OverrideNSWindowContentView() {
       setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
   [window_ setContentView:container_view_];
   AddContentViewLayers();
+}
+
+bool NativeWindowMac::HasStyleMask(NSUInteger flag) const {
+  return [window_ styleMask] & flag;
 }
 
 void NativeWindowMac::SetStyleMask(bool on, NSUInteger flag) {

@@ -498,6 +498,13 @@ void NativeWindowViews::Show() {
   if (global_menu_bar_)
     global_menu_bar_->OnWindowMapped();
 #endif
+
+#if defined(USE_OZONE_PLATFORM_X11)
+  // On X11, setting Z order before showing the window doesn't take effect,
+  // so we have to call it again.
+  if (IsX11())
+    widget()->SetZOrderLevel(widget()->GetZOrderLevel());
+#endif
 }
 
 void NativeWindowViews::ShowInactive() {
@@ -726,7 +733,6 @@ void NativeWindowViews::SetBounds(const gfx::Rect& bounds, bool animate) {
 #if BUILDFLAG(IS_WIN)
   if (is_moving_ || is_resizing_) {
     pending_bounds_change_ = bounds;
-    return;
   }
 #endif
 
