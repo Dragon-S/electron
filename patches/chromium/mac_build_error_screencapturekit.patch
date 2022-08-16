@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dragon-S <15919917852@163.com>
+Date: Tue, 16 Aug 2022 14:38:14 +0800
+Subject: mac build error ScreenCaptureKit
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+低于12.3的mac编译错误，因为ScreenCaptureKit从12.3才开始支持。
+由于weak_frameworks没有起作用，如果要在12.3以上的版本编译，则需要开启
+weak_frameworks = [ "ScreenCaptureKit.framework" ]
+
+diff --git a/content/browser/BUILD.gn b/content/browser/BUILD.gn
+index ad23ccd186b867eb8524dde065551e5ec17c06cb..8328ad88e7734b6445c7e2381d532ccb4108db04 100644
+--- a/content/browser/BUILD.gn
++++ b/content/browser/BUILD.gn
+@@ -2578,7 +2578,7 @@ source_set("browser") {
+         "//sandbox/mac:seatbelt_extension",
+       ]
+       frameworks += [ "CoreMedia.framework" ]
+-      weak_frameworks = [ "ScreenCaptureKit.framework" ]
++      # weak_frameworks = [ "ScreenCaptureKit.framework" ]
+     }
+     if (is_chromeos_lacros) {
+       sources += [
+diff --git a/content/browser/media/capture/screen_capture_kit_device_mac.mm b/content/browser/media/capture/screen_capture_kit_device_mac.mm
+index 50a779be2e7d3a95496e2791187a6b56266786eb..6cf817a22546a26a5c568172fbce2b7daa7c0d3d 100644
+--- a/content/browser/media/capture/screen_capture_kit_device_mac.mm
++++ b/content/browser/media/capture/screen_capture_kit_device_mac.mm
+@@ -4,7 +4,9 @@
+ 
+ #include "content/browser/media/capture/screen_capture_kit_device_mac.h"
+ 
++#if MAC_OS_X_VERSION_MAX_ALLOWED >= 120300
+ #import <ScreenCaptureKit/ScreenCaptureKit.h>
++#endif
+ 
+ #include "base/mac/scoped_nsobject.h"
+ #include "base/task/bind_post_task.h"
+@@ -17,6 +19,7 @@
+ using SampleCallback = base::RepeatingCallback<void(gfx::ScopedInUseIOSurface)>;
+ using ErrorCallback = base::RepeatingClosure;
+ 
++#if MAC_OS_X_VERSION_MAX_ALLOWED >= 120300
+ API_AVAILABLE(macos(12.3))
+ @interface ScreenCaptureKitDeviceHelper
+     : NSObject <SCStreamDelegate, SCStreamOutput> {
+@@ -57,9 +60,11 @@ - (void)stream:(SCStream*)stream didStopWithError:(NSError*)error {
+ }
+ 
+ @end
++#endif
+ 
+ namespace content {
+ 
++#if MAC_OS_X_VERSION_MAX_ALLOWED >= 120300
+ namespace {
+ 
+ class API_AVAILABLE(macos(12.3)) ScreenCaptureKitDeviceMac
+@@ -257,6 +262,7 @@ void OnStop() override {
+ };
+ 
+ }  // namespace
++#endif
+ 
+ std::unique_ptr<media::VideoCaptureDevice> CreateScreenCaptureKitDeviceMac(
+     const DesktopMediaID& source) {
+@@ -282,8 +288,10 @@ void OnStop() override {
+   IncrementDesktopCaptureCounter(source.audio_share
+                                      ? SCREEN_CAPTURER_CREATED_WITH_AUDIO
+                                      : SCREEN_CAPTURER_CREATED_WITHOUT_AUDIO);
++#if MAC_OS_X_VERSION_MAX_ALLOWED >= 120300
+   if (@available(macos 12.3, *))
+     return std::make_unique<ScreenCaptureKitDeviceMac>(source);
++#endif
+   return nullptr;
+ }
+ 
