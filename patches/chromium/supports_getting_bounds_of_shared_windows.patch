@@ -1,0 +1,159 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dragon-S <15919917852@163.com>
+Date: Wed, 17 Aug 2022 16:36:40 +0800
+Subject: Supports getting bounds of shared windows
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+支持获取共享窗口的大小和坐标,此patch要同步electron的修改
+
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 43859d267010103daf80525a5af0f312a577411c..21bd1b6777dec5ee10a99b48dcf3eeb36c09d86d 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -722,6 +722,8 @@ static_library("browser") {
+     "media/webrtc/media_stream_device_permissions.h",
+     "media/webrtc/native_desktop_media_list.cc",
+     "media/webrtc/native_desktop_media_list.h",
++    "media/webrtc/native_desktop_media_frame_bound_indicator.cc",
++    "media/webrtc/native_desktop_media_frame_bound_indicator.h",
+     "media/webrtc/permission_bubble_media_access_handler.cc",
+     "media/webrtc/permission_bubble_media_access_handler.h",
+     "media/webrtc/same_origin_observer.cc",
+diff --git a/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.cc b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..457c0e0567ce1ad5e934d9dc8bc4749c48492064
+--- /dev/null
++++ b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.cc
+@@ -0,0 +1,30 @@
++#include "chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h"
++#include "base/logging.h"
++
++NativeDesktopMediaFrameBoundIndicator* NativeDesktopMediaFrameBoundIndicator::GetInstance() {
++  return base::Singleton<NativeDesktopMediaFrameBoundIndicator>::get();
++}
++
++NativeDesktopMediaFrameBoundIndicator::NativeDesktopMediaFrameBoundIndicator() = default;
++
++NativeDesktopMediaFrameBoundIndicator::~NativeDesktopMediaFrameBoundIndicator() = default;
++
++void NativeDesktopMediaFrameBoundIndicator::StartObserving(NativeDesktopMediaFrameBoundObserver* observer) {
++  observer_ = observer;
++}
++
++void NativeDesktopMediaFrameBoundIndicator::StopObserving() {
++  observer_ = nullptr;
++}
++
++void NativeDesktopMediaFrameBoundIndicator::OnMediaFrameBoundChanged(const gfx::Rect& bound) {
++  // LOG(ERROR) << "sll-----NativeDesktopMediaFrameBoundIndicator::OnMediaFrameBoundChanged:: "
++  // << "x = " << bound.x()
++  // << ", y = " << bound.y()
++  // << ", width = " << bound.width()
++  // << ", height = " << bound.height();
++
++  if (observer_ != nullptr) {
++    observer_->OnMediaFrameBoundChanged(bound);
++  }
++}
+diff --git a/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..14643e3e535cdb9a805c825aca88853b62b73e24
+--- /dev/null
++++ b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h
+@@ -0,0 +1,34 @@
++#ifndef CHROME_BROWSER_MEDIA_WEBRTC_NATIVE_DESKTOP_MEDIA_FRAME_BOUND_INDICATOR_H_
++#define CHROME_BROWSER_MEDIA_WEBRTC_NATIVE_DESKTOP_MEDIA_FRAME_BOUND_INDICATOR_H_
++
++#include "base/memory/singleton.h"
++#include "ui/gfx/geometry/rect.h"
++
++class NativeDesktopMediaFrameBoundObserver {
++ public:
++  virtual void OnMediaFrameBoundChanged(const gfx::Rect& bound) = 0;
++
++ protected:
++  virtual ~NativeDesktopMediaFrameBoundObserver() {}
++};
++
++class NativeDesktopMediaFrameBoundIndicator {
++ public:
++  static NativeDesktopMediaFrameBoundIndicator* GetInstance();
++
++  void StartObserving(NativeDesktopMediaFrameBoundObserver* observer);
++
++  void StopObserving();
++
++  void OnMediaFrameBoundChanged(const gfx::Rect& bound);
++
++ private:
++  friend struct base::DefaultSingletonTraits<NativeDesktopMediaFrameBoundIndicator>;
++
++  NativeDesktopMediaFrameBoundIndicator();
++  virtual ~NativeDesktopMediaFrameBoundIndicator();
++
++  NativeDesktopMediaFrameBoundObserver* observer_ = nullptr;
++};
++
++#endif  // CHROME_BROWSER_MEDIA_WEBRTC_NATIVE_DESKTOP_MEDIA_FRAME_BOUND_INDICATOR_H_
+diff --git a/content/browser/media/capture/desktop_capture_device.cc b/content/browser/media/capture/desktop_capture_device.cc
+index 725784a5fc2f0d52b2485f19410b707391212c0e..6ff23aba4eaf75ba6e56bf263fa5bb8ba676b1e6 100644
+--- a/content/browser/media/capture/desktop_capture_device.cc
++++ b/content/browser/media/capture/desktop_capture_device.cc
+@@ -52,6 +52,7 @@
+ #include "third_party/webrtc/modules/desktop_capture/fake_desktop_capturer.h"
+ #include "third_party/webrtc/modules/desktop_capture/mouse_cursor_monitor.h"
+ #include "ui/gfx/icc_profile.h"
++#include "chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h"
+ 
+ #if BUILDFLAG(IS_CHROMEOS_LACROS)
+ #include "content/browser/media/capture/desktop_capturer_lacros.h"
+@@ -82,6 +83,13 @@ bool IsFrameUnpackedOrInverted(webrtc::DesktopFrame* frame) {
+       frame->size().width() * webrtc::DesktopFrame::kBytesPerPixel;
+ }
+ 
++void OnMediaFrameBoundChanged(const gfx::Rect& bound) {
++  DCHECK_CURRENTLY_ON(BrowserThread::UI);
++  NativeDesktopMediaFrameBoundIndicator* media_frame_bound_indicator =
++    NativeDesktopMediaFrameBoundIndicator::GetInstance();
++  media_frame_bound_indicator->OnMediaFrameBoundChanged(bound);
++}
++
+ void BindWakeLockProvider(
+     mojo::PendingReceiver<device::mojom::WakeLockProvider> receiver) {
+   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+@@ -324,6 +332,15 @@ void DesktopCaptureDevice::Core::OnCaptureResult(
+                        FROM_HERE, "The desktop capturer has failed.");
+       return;
+     }
++
++    //mac 窗口最小化处理
++    if ((capturer_type_ == DesktopMediaID::TYPE_WINDOW)
++      && (BrowserThread::IsThreadInitialized(BrowserThread::UI))) {
++      gfx::Rect bound = gfx::Rect(0, 0, 0, 0);
++      GetUIThreadTaskRunner({})->PostTask(
++          FROM_HERE, base::BindOnce(&OnMediaFrameBoundChanged, bound));
++    }
++
+     // Continue capturing frames in the temporary error case.
+     ScheduleNextCaptureFrame();
+     return;
+@@ -390,6 +407,17 @@ void DesktopCaptureDevice::Core::OnCaptureResult(
+     DCHECK(frame);
+     DCHECK(!frame->size().is_empty());
+ 
++    if ((capturer_type_ == DesktopMediaID::TYPE_WINDOW)
++      && (BrowserThread::IsThreadInitialized(BrowserThread::UI))) {
++      webrtc::DesktopRect original_window_rect = frame->original_window_rect();
++      gfx::Rect bounds = gfx::Rect(original_window_rect.left(),
++                                  original_window_rect.top(),
++                                  original_window_rect.width(),
++                                  original_window_rect.height());
++      GetUIThreadTaskRunner({})->PostTask(
++          FROM_HERE, base::BindOnce(&OnMediaFrameBoundChanged, bounds));
++    }
++
+     if (!frame->size().equals(output_size)) {
+       // Down-scale and/or letterbox to the target format if the frame does
+       // not match the output size.

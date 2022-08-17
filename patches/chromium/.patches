@@ -132,3 +132,4 @@ fix_windows_build_with_enable_plugins_false.patch
 cherry-pick-bd9724c9fe63.patch
 cherry-pick-c643d18a078d.patch
 mac_build_error_screencapturekit.patch
+supports_getting_bounds_of_shared_windows.patch
