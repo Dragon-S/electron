@@ -1,6 +1,7 @@
 # THIS FILE IS AUTO-GENERATED, PLEASE DO NOT EDIT BY HAND
 auto_filenames = {
   api_docs = [
+    "docs/api/.DS_Store",
     "docs/api/accelerator.md",
     "docs/api/app.md",
     "docs/api/auto-updater.md",
@@ -15,6 +16,7 @@ auto_filenames = {
     "docs/api/cookies.md",
     "docs/api/crash-reporter.md",
     "docs/api/debugger.md",
+    "docs/api/desktop-capturer-expand.md",
     "docs/api/desktop-capturer.md",
     "docs/api/dialog.md",
     "docs/api/dock.md",
@@ -193,6 +195,8 @@ auto_filenames = {
     "lib/browser/api/browser-window.ts",
     "lib/browser/api/content-tracing.ts",
     "lib/browser/api/crash-reporter.ts",
+    "lib/browser/api/desktop-capturer-expand.ts",
+    "lib/browser/api/desktop-capturer-expand/desktop-capturer-expand-native.ts",
     "lib/browser/api/desktop-capturer.ts",
     "lib/browser/api/dialog.ts",
     "lib/browser/api/exports/electron.ts",
