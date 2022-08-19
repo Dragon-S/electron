@@ -102,6 +102,33 @@ index 1c7c0a3ef21171b79c495868bfa97e5aa5ed1c97..7f2d3dcc9e455db5c4eb227e51892593
    void Activate() override;
    void Deactivate() override;
    bool IsActive() const override;
+diff --git a/ui/views/widget/native_widget_mac.h b/ui/views/widget/native_widget_mac.h
+index 3e50193814668e76b0ad644c8ce68f443886216c..b41c9148f8ba2a50f07fcafa1393c44257bdeb71 100644
+--- a/ui/views/widget/native_widget_mac.h
++++ b/ui/views/widget/native_widget_mac.h
+@@ -149,6 +149,7 @@ class VIEWS_EXPORT NativeWidgetMac : public internal::NativeWidgetPrivate,
+             const gfx::Rect& restore_bounds) override;
+   void Hide() override;
+   bool IsVisible() const override;
++  bool IsEntirelyCovered() const override;
+   void Activate() override;
+   void Deactivate() override;
+   bool IsActive() const override;
+diff --git a/ui/views/widget/native_widget_mac.mm b/ui/views/widget/native_widget_mac.mm
+index c0092160f31fccb743b0ae6ae3cb9d8f10f25337..41d5dc46c27748f91f80b5e72772e859cde1b6a8 100644
+--- a/ui/views/widget/native_widget_mac.mm
++++ b/ui/views/widget/native_widget_mac.mm
+@@ -585,6 +585,10 @@ void OnDidChangeFocus(View* focused_before, View* focused_now) override {
+   return ns_window_host_ && ns_window_host_->IsVisible();
+ }
+ 
++bool NativeWidgetMac::IsEntirelyCovered() const {
++  return false;
++}
++
+ void NativeWidgetMac::Activate() {
+   if (!GetNSWindowMojo())
+     return;
 diff --git a/ui/views/widget/native_widget_private.h b/ui/views/widget/native_widget_private.h
 index 5208d006923a3cebf7de9f40bb98b3799a847c66..d7d228bc5951baf0370cb2a2a6afe0d5b2fd9af0 100644
 --- a/ui/views/widget/native_widget_private.h
