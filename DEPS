@@ -9,6 +9,8 @@ vars = {
     '16fa32231e2ccd89d2804b3f765319128b20c4ac',
   'squirrel.mac_version':
     '0e5d146ba13101a1302d59ea6e6e0b3cace4ae38',
+  'harfbuzz_revision':
+    'd1bf6c0c26aa4bb28f107548fcda262b057dfbee',
 
   'pyyaml_version': '3.12',
 
