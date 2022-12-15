@@ -4,6 +4,7 @@
 export const browserModuleList: ElectronInternal.ModuleEntry[] = [
   { name: 'app', loader: () => require('./app') },
   { name: 'autoUpdater', loader: () => require('./auto-updater') },
+  { name: 'desktopCapturerExpand', loader: () => require('./desktop-capturer-expand') },
   { name: 'BaseWindow', loader: () => require('./base-window') },
   { name: 'BrowserView', loader: () => require('./browser-view') },
   { name: 'BrowserWindow', loader: () => require('./browser-window') },

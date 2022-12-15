@@ -90,7 +90,8 @@
   V(electron_renderer_crash_reporter)    \
   V(electron_renderer_ipc)               \
   V(electron_renderer_web_frame)         \
-  V(electron_utility_parent_port)
+  V(electron_utility_parent_port)        \
+  V(electron_browser_desktop_capturer_expand)
 
 #define ELECTRON_VIEWS_MODULES(V) V(electron_browser_image_view)
 
