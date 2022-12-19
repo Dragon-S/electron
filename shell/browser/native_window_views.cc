@@ -539,6 +539,10 @@ bool NativeWindowViews::IsVisible() {
   return widget()->IsVisible();
 }
 
+bool NativeWindowViews::IsEntirelyCovered() {
+  return widget()->IsEntirelyCovered();
+}
+
 bool NativeWindowViews::IsEnabled() {
 #if BUILDFLAG(IS_WIN)
   return ::IsWindowEnabled(GetAcceleratedWidget());

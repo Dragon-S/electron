@@ -1,0 +1,255 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Mon, 19 Dec 2022 18:20:10 +0800
+Subject: windows support IsEntirelyCovered
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Windows 支持检测窗口是否被完全覆盖
+
+diff --git a/ui/views/widget/desktop_aura/desktop_native_widget_aura.cc b/ui/views/widget/desktop_aura/desktop_native_widget_aura.cc
+index b5b2c94058f0d0e5ef0254c996b97b8682b573f3..e3adff54d44608d5be02f0ac5ffb63cd657973c9 100644
+--- a/ui/views/widget/desktop_aura/desktop_native_widget_aura.cc
++++ b/ui/views/widget/desktop_aura/desktop_native_widget_aura.cc
+@@ -923,6 +923,10 @@ bool DesktopNativeWidgetAura::IsVisible() const {
+          desktop_window_tree_host_ && desktop_window_tree_host_->IsVisible();
+ }
+ 
++bool DesktopNativeWidgetAura::IsEntirelyCovered() const {
++  return desktop_window_tree_host_->IsEntirelyCovered();
++}
++
+ void DesktopNativeWidgetAura::Activate() {
+   if (desktop_window_tree_host_ && content_window_) {
+     bool was_tree_active = desktop_window_tree_host_->IsActive();
+diff --git a/ui/views/widget/desktop_aura/desktop_native_widget_aura.h b/ui/views/widget/desktop_aura/desktop_native_widget_aura.h
+index e6d9e451f449e90b5c5cf5971b8bcbd937de6f75..d4d6563dee6421c674405c50ba37163f712a966a 100644
+--- a/ui/views/widget/desktop_aura/desktop_native_widget_aura.h
++++ b/ui/views/widget/desktop_aura/desktop_native_widget_aura.h
+@@ -157,6 +157,7 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
+             const gfx::Rect& restore_bounds) override;
+   void Hide() override;
+   bool IsVisible() const override;
++  bool IsEntirelyCovered() const override;
+   void Activate() override;
+   void Deactivate() override;
+   bool IsActive() const override;
+diff --git a/ui/views/widget/desktop_aura/desktop_window_tree_host.h b/ui/views/widget/desktop_aura/desktop_window_tree_host.h
+index e97f5a91e3e03800dfef8cb9335395426af9faae..dc130a8ea268c640e9c00173cb74f3b91bfc9af7 100644
+--- a/ui/views/widget/desktop_aura/desktop_window_tree_host.h
++++ b/ui/views/widget/desktop_aura/desktop_window_tree_host.h
+@@ -107,6 +107,8 @@ class VIEWS_EXPORT DesktopWindowTreeHost {
+ 
+   virtual bool IsVisible() const = 0;
+ 
++  virtual bool IsEntirelyCovered() const = 0;
++
+   virtual void SetSize(const gfx::Size& size) = 0;
+   virtual void StackAbove(aura::Window* window) = 0;
+   virtual void StackAtTop() = 0;
+diff --git a/ui/views/widget/desktop_aura/desktop_window_tree_host_win.cc b/ui/views/widget/desktop_aura/desktop_window_tree_host_win.cc
+index 65d4e0b5f99c398814f1746a8ab66528e766f373..7ea22c69543fbea880480c456a1ed070a0ef4b9d 100644
+--- a/ui/views/widget/desktop_aura/desktop_window_tree_host_win.cc
++++ b/ui/views/widget/desktop_aura/desktop_window_tree_host_win.cc
+@@ -294,6 +294,10 @@ bool DesktopWindowTreeHostWin::IsVisible() const {
+   return message_handler_->IsVisible();
+ }
+ 
++bool DesktopWindowTreeHostWin::IsEntirelyCovered() const {
++  return message_handler_->IsEntirelyCovered();
++}
++
+ void DesktopWindowTreeHostWin::SetSize(const gfx::Size& size) {
+   gfx::Size size_in_pixels =
+       display::win::ScreenWin::DIPToScreenSize(GetHWND(), size);
+diff --git a/ui/views/widget/desktop_aura/desktop_window_tree_host_win.h b/ui/views/widget/desktop_aura/desktop_window_tree_host_win.h
+index 17cf2b79963079e66050e29411baa5a398c8d68a..d56a16e17c8a7428bcc734cca2ef0b434adfbc70 100644
+--- a/ui/views/widget/desktop_aura/desktop_window_tree_host_win.h
++++ b/ui/views/widget/desktop_aura/desktop_window_tree_host_win.h
+@@ -108,6 +108,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
+   void Show(ui::WindowShowState show_state,
+             const gfx::Rect& restore_bounds) override;
+   bool IsVisible() const override;
++  bool IsEntirelyCovered() const override;
+   void SetSize(const gfx::Size& size) override;
+   void StackAbove(aura::Window* window) override;
+   void StackAtTop() override;
+diff --git a/ui/views/widget/native_widget_aura.cc b/ui/views/widget/native_widget_aura.cc
+index 4a22d57d2f3380ed4cd688cb31da74c6964f0008..c9f3bd993e61ee18ca710d4cc58c2f1854124dc9 100644
+--- a/ui/views/widget/native_widget_aura.cc
++++ b/ui/views/widget/native_widget_aura.cc
+@@ -694,6 +694,10 @@ bool NativeWidgetAura::IsVisible() const {
+   return window_ && window_->IsVisible();
+ }
+ 
++bool NativeWidgetAura::IsEntirelyCovered() const {
++  return false;
++}
++
+ void NativeWidgetAura::Activate() {
+   if (!window_)
+     return;
+diff --git a/ui/views/widget/native_widget_aura.h b/ui/views/widget/native_widget_aura.h
+index 5cbaa9d4a3943b9467c6ffe17c9234126c729e20..5b0f3d250593a27cf263a3ea56634967d4be1616 100644
+--- a/ui/views/widget/native_widget_aura.h
++++ b/ui/views/widget/native_widget_aura.h
+@@ -122,6 +122,7 @@ class VIEWS_EXPORT NativeWidgetAura : public internal::NativeWidgetPrivate,
+             const gfx::Rect& restore_bounds) override;
+   void Hide() override;
+   bool IsVisible() const override;
++  bool IsEntirelyCovered() const override;
+   void Activate() override;
+   void Deactivate() override;
+   bool IsActive() const override;
+diff --git a/ui/views/widget/native_widget_mac.h b/ui/views/widget/native_widget_mac.h
+index 4bd9b488580e38a127a74237a28bb46f8a38685c..fe62f68289ef60415afa228f76801d10c2e09f7c 100644
+--- a/ui/views/widget/native_widget_mac.h
++++ b/ui/views/widget/native_widget_mac.h
+@@ -158,6 +158,7 @@ class VIEWS_EXPORT NativeWidgetMac : public internal::NativeWidgetPrivate,
+             const gfx::Rect& restore_bounds) override;
+   void Hide() override;
+   bool IsVisible() const override;
++  bool IsEntirelyCovered() const override;
+   void Activate() override;
+   void Deactivate() override;
+   bool IsActive() const override;
+diff --git a/ui/views/widget/native_widget_mac.mm b/ui/views/widget/native_widget_mac.mm
+index 50c4b63eb548b8d860e79ecdae8656cc0f1a6e9e..5f216381496802a4370b3f0ba932f4b94c0c4842 100644
+--- a/ui/views/widget/native_widget_mac.mm
++++ b/ui/views/widget/native_widget_mac.mm
+@@ -630,6 +630,10 @@ void OnDidChangeFocus(View* focused_before, View* focused_now) override {
+   return ns_window_host_ && ns_window_host_->IsVisible();
+ }
+ 
++bool NativeWidgetMac::IsEntirelyCovered() const {
++  return false;
++}
++
+ void NativeWidgetMac::Activate() {
+   if (!GetNSWindowMojo())
+     return;
+diff --git a/ui/views/widget/native_widget_private.h b/ui/views/widget/native_widget_private.h
+index 321d4669f9659c67e2359bc097bbff501d629d59..1c69db574b92d3cf1538340c5f62f53a37563174 100644
+--- a/ui/views/widget/native_widget_private.h
++++ b/ui/views/widget/native_widget_private.h
+@@ -186,6 +186,7 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
+                     const gfx::Rect& restore_bounds) = 0;
+   virtual void Hide() = 0;
+   virtual bool IsVisible() const = 0;
++  virtual bool IsEntirelyCovered() const = 0;
+   virtual void Activate() = 0;
+   virtual void Deactivate() = 0;
+   virtual bool IsActive() const = 0;
+diff --git a/ui/views/widget/widget.cc b/ui/views/widget/widget.cc
+index a00e37288c693b906616c059e9e02b5e88a3ca39..46ef7a43ff806b1818019616f827e2d4cdbb0023 100644
+--- a/ui/views/widget/widget.cc
++++ b/ui/views/widget/widget.cc
+@@ -895,6 +895,10 @@ bool Widget::IsVisible() const {
+   return native_widget_->IsVisible();
+ }
+ 
++bool Widget::IsEntirelyCovered() const {
++  return native_widget_->IsEntirelyCovered();
++}
++
+ const ui::ThemeProvider* Widget::GetThemeProvider() const {
+   // The theme provider is provided by the very top widget in the ownership
+   // chain, which may include parenting, anchoring, etc. Use
+diff --git a/ui/views/widget/widget.h b/ui/views/widget/widget.h
+index ae1aa11206097477c664198331dcb009277ff120..5adb4a18d8a6cdc321b3cc2a5c15b773e7f297dd 100644
+--- a/ui/views/widget/widget.h
++++ b/ui/views/widget/widget.h
+@@ -803,6 +803,8 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
+   // Returns whether the Widget is visible to the user.
+   virtual bool IsVisible() const;
+ 
++  virtual bool IsEntirelyCovered() const;
++
+   // Returns the ThemeProvider that provides theme resources for this Widget.
+   virtual const ui::ThemeProvider* GetThemeProvider() const;
+ 
+diff --git a/ui/views/win/hwnd_message_handler.cc b/ui/views/win/hwnd_message_handler.cc
+index 55afa69870f27b877826ea8a442ab20a8b336d74..f9b506046290c85fa3ddbac0c5dc728bf3400886 100644
+--- a/ui/views/win/hwnd_message_handler.cc
++++ b/ui/views/win/hwnd_message_handler.cc
+@@ -823,6 +823,67 @@ void HWNDMessageHandler::SetAlwaysOnTop(bool on_top) {
+                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+ }
+ 
++bool HWNDMessageHandler::IsEntirelyCovered() const {
++  // 获取目标窗口句柄
++  HWND hWnd = hwnd();
++
++  // 获取目标窗口坐标、大小，并创建对应区域区域
++  RECT rcTarget;
++  GetWindowRect(hWnd, &rcTarget);
++  base::win::ScopedRegion rgnTarget(::CreateRectRgn(rcTarget.left, rcTarget.top, rcTarget.right, rcTarget.bottom));
++
++  // 判断目标窗口是否子窗口
++  bool isChild = (WS_CHILD == (GetWindowLong(hWnd, GWL_STYLE) & WS_CHILD));
++
++  // 判断目标窗口是否是桌面窗口，如果是桌面窗口，则获取最顶的最后一个窗口为为目标窗口
++  if (GetDesktopWindow() == hWnd) {
++    hWnd = GetWindow(GetTopWindow(hWnd), GW_HWNDLAST);
++  }
++
++  // 初始化目标窗口之上的所有窗口组成的区域
++  base::win::ScopedRegion rgnAboveWnds(::CreateRectRgn(0, 0, 0, 0));
++
++  // 检测目标窗口相关的所有窗口，直到检测完成（即找到目标窗口的父窗口为止）
++  do {
++    HWND hCurWnd = hWnd;
++    // 遍历目标窗口之上的所有窗口
++    while (NULL != (hWnd = GetNextWindow(hWnd, GW_HWNDPREV))) {
++      // 过滤了非窗口，没有显示的，无效的，非windows工具栏，置顶的窗口。如果不过滤非工具栏的句柄，那么会得到一些奇怪的窗口，会很难判断是否被遮住。
++      if (IsWindow(hWnd)
++      && IsWindowVisible(hWnd)
++      && IsWindowEnabled(hWnd)
++      && !(GetWindowLong(hWnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)
++      && !(GetWindowLong(hWnd, GWL_EXSTYLE) & WS_EX_TOPMOST)) {
++        // 获取目标窗口之上的窗口的坐标、大小，并创建区域
++        RECT hwndRect = {0, 0, 0, 0};
++        ::GetWindowRect(hWnd, &hwndRect);
++        base::win::ScopedRegion rgn(::CreateRectRgn(hwndRect.left, hwndRect.top ,hwndRect.right, hwndRect.bottom));
++
++        // 合并目标窗口之上的窗口的组成的区域，并保存
++        ::CombineRgn(rgnAboveWnds.get(), rgnAboveWnds.get(), rgn.get(), RGN_OR);
++
++        // 将合并的区域与目标窗口区域做比较
++        base::win::ScopedRegion tempRgn(::CreateRectRgn(0, 0, 0, 0));
++        int result = ::CombineRgn(tempRgn.get(), rgnTarget.get(), rgnAboveWnds.get(), RGN_DIFF);
++
++        // 判断目标区域是否被完全覆盖
++        if (result == NULLREGION) {
++          return true;
++        }
++      }
++    }
++    // 如果目标窗口是子窗口，则继续检测，知道不是为止
++    if (isChild) {
++      hWnd = GetParent(hCurWnd);
++      isChild = (WS_CHILD == (GetWindowLong(hWnd, GWL_STYLE) & WS_CHILD));
++    } else {
++      break;
++    }
++  } while ( true );
++
++  return false;
++}
++
+ bool HWNDMessageHandler::IsVisible() const {
+   // In headless mode the platform window is always hidden, so instead of
+   // returning the actual window visibility state return the expected visibility
+diff --git a/ui/views/win/hwnd_message_handler.h b/ui/views/win/hwnd_message_handler.h
+index 6d0adb7b5febc5625073312e7f1d557f89927ac8..bf3ee12f6723bbd3defc00b2f18650ff25c60fb8 100644
+--- a/ui/views/win/hwnd_message_handler.h
++++ b/ui/views/win/hwnd_message_handler.h
+@@ -138,6 +138,7 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
+   void SetAlwaysOnTop(bool on_top);
+ 
+   bool IsVisible() const;
++  bool IsEntirelyCovered() const;
+   bool IsActive() const;
+   bool IsMinimized() const;
+   bool IsMaximized() const;

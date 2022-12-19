@@ -125,3 +125,4 @@ fix_tray_icon_gone_on_lock_screen.patch
 cherry-pick-2611772cf0a0.patch
 cherry-pick-3235c1d1955b.patch
 supports_getting_bounds_of_shared_windows.patch
+windows_support_isentirelycovered.patch

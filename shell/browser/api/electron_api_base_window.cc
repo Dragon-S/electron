@@ -352,6 +352,10 @@ bool BaseWindow::IsVisible() {
   return window_->IsVisible();
 }
 
+bool BaseWindow::IsEntirelyCovered() {
+  return window_->IsEntirelyCovered();
+}
+
 bool BaseWindow::IsEnabled() {
   return window_->IsEnabled();
 }
@@ -1160,6 +1164,7 @@ void BaseWindow::BuildPrototype(v8::Isolate* isolate,
       .SetMethod("showInactive", &BaseWindow::ShowInactive)
       .SetMethod("hide", &BaseWindow::Hide)
       .SetMethod("isVisible", &BaseWindow::IsVisible)
+      .SetMethod("isEntirelyCovered", &BaseWindow::IsEntirelyCovered)
       .SetMethod("isEnabled", &BaseWindow::IsEnabled)
       .SetMethod("setEnabled", &BaseWindow::SetEnabled)
       .SetMethod("maximize", &BaseWindow::Maximize)
