@@ -683,8 +683,12 @@ void BaseWindow::SetIgnoreMouseEvents(bool ignore,
                                       gin_helper::Arguments* args) {
   gin_helper::Dictionary options;
   bool forward = false;
-  args->GetNext(&options) && options.Get("forward", &forward);
-  return window_->SetIgnoreMouseEvents(ignore, forward);
+  bool flag = false;
+  if (args->GetNext(&options)) {
+    options.Get("forward", &forward);
+    options.Get("flag", &flag);
+  }
+  return window_->SetIgnoreMouseEvents(ignore, forward, flag);
 }
 
 void BaseWindow::SetContentProtection(bool enable) {
