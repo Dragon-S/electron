@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Wed, 21 Dec 2022 16:18:36 +0800
+Subject: Shared system sound produces echo
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+解决共享系统声音时回声问题，但是开启回音消除后，在双讲环境下对共享声音有损伤
+
+diff --git a/third_party/blink/renderer/modules/mediastream/user_media_processor.cc b/third_party/blink/renderer/modules/mediastream/user_media_processor.cc
+index 9e8ba614e4e14f1afcda88f6cc866c1fa8ec4c2c..2a3d6794397a07ba01961aca71093168b7f72773 100644
+--- a/third_party/blink/renderer/modules/mediastream/user_media_processor.cc
++++ b/third_party/blink/renderer/modules/mediastream/user_media_processor.cc
+@@ -1490,7 +1490,8 @@ UserMediaProcessor::CreateAudioSource(
+   blink::AudioProcessingProperties audio_processing_properties =
+       current_request_info_->audio_capture_settings()
+           .audio_processing_properties();
+-  if (blink::IsScreenCaptureMediaType(device.type) ||
++  //FIXME:解决共享系统声音时回声问题，但是开启回音消除后，在双讲环境下对共享声音有损伤
++  if (/*blink::IsScreenCaptureMediaType(device.type) ||*/
+       !blink::MediaStreamAudioProcessor::WouldModifyAudio(
+           audio_processing_properties)) {
+     SendLogMessage(
