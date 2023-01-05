@@ -41,7 +41,7 @@ const getHeaders = (filePath: string, fileName: string) => {
 };
 
 const targetRepo = releaseVersion.indexOf('nightly') > 0 ? 'nightlies' : 'electron';
-const uploadUrl = `https://uploads.github.com/repos/electron/${targetRepo}/releases/${releaseId}/assets{?name,label}`;
+const uploadUrl = `https://uploads.github.com/repos/Dragon-S/${targetRepo}/releases/${releaseId}/assets{?name,label}`;
 let retry = 0;
 
 function uploadToGitHub () {
@@ -50,7 +50,7 @@ function uploadToGitHub () {
     headers: getHeaders(filePath, fileName),
     data: fs.createReadStream(filePath) as any,
     name: fileName,
-    owner: 'electron',
+    owner: 'Dragon-S',
     repo: targetRepo,
     release_id: releaseId
   }).then(() => {

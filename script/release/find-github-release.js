@@ -14,7 +14,7 @@ const version = process.argv[2];
 
 async function findRelease () {
   const releases = await octokit.repos.listReleases({
-    owner: 'electron',
+    owner: 'Dragon-S',
     repo: version.indexOf('nightly') > 0 ? 'nightlies' : 'electron'
   });
 
