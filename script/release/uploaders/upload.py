@@ -195,7 +195,8 @@ def get_electron_build_version():
     # In CI we just build as told.
     return ELECTRON_VERSION
   electron = get_electron_exec()
-  return subprocess.check_output([electron, '--version']).strip()
+  args = [electron, '--version']
+  return subprocess.check_output(args).decode('utf-8').strip()
 
 
 class NonZipFileError(ValueError):
