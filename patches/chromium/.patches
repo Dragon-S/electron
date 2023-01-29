@@ -129,3 +129,4 @@ windows_support_isentirelycovered.patch
 shared_system_sound_produces_echo.patch
 expose_v8initializer_codegenerationcheckcallbackinmainthread.patch
 cherry-pick-43637378b14e.patch
+axselectedtextmarkerrange_should_not_be_backwards.patch
