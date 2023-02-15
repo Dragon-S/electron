@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Wed, 15 Feb 2023 11:27:55 +0800
+Subject: shared window set focus
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+共享某个窗口的同时，将此窗口设置到所在屏幕窗口的最顶层
+
+diff --git a/content/browser/media/capture/desktop_capture_device.cc b/content/browser/media/capture/desktop_capture_device.cc
+index d6e07cb7dac56b31737f2d9f0f06576dbf3ad28f..94b0b27b764b6c0043fc97e3adfc2afe81a8e267 100644
+--- a/content/browser/media/capture/desktop_capture_device.cc
++++ b/content/browser/media/capture/desktop_capture_device.cc
+@@ -607,6 +607,8 @@ std::unique_ptr<media::VideoCaptureDevice> DesktopCaptureDevice::Create(
+           webrtc::DesktopCapturer::CreateWindowCapturer(options);
+ #endif
+       if (window_capturer && window_capturer->SelectSource(source.id)) {
++        // 共享某个窗口的同时，将此窗口设置到所在屏幕窗口的最顶层
++        window_capturer->FocusOnSelectedSource();
+         capturer = std::make_unique<webrtc::DesktopAndCursorComposer>(
+             std::move(window_capturer), options);
+         IncrementDesktopCaptureCounter(WINDOW_CAPTURER_CREATED);
