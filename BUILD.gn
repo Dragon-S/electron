@@ -28,6 +28,7 @@ import("filenames.gni")
 import("filenames.hunspell.gni")
 import("filenames.libcxx.gni")
 import("filenames.libcxxabi.gni")
+import("onnxruntime.lib.gni")
 
 if (is_mac) {
   import("//build/config/mac/rules.gni")
@@ -833,12 +834,21 @@ if (is_mac) {
     outputs = [ "{{bundle_resources_dir}}/{{source_file_part}}" ]
   }
 
+  copy("onnxruntime_library_copy") {
+    sources = onnxruntime_library
+    outputs = [ "$root_build_dir/{{source_file_part}}" ]
+  }
+
   if (!is_component_build && is_component_ffmpeg) {
     bundle_data("electron_framework_libraries") {
       sources = []
       public_deps = []
       sources += [ "$root_out_dir/libffmpeg.dylib" ]
       public_deps += [ "//third_party/ffmpeg:ffmpeg" ]
+
+      sources += [ "$root_out_dir/libonnxruntime.1.13.1.dylib" ]
+      public_deps += [ ":onnxruntime_library_copy" ]
+
       outputs = [ "{{bundle_contents_dir}}/Libraries/{{source_file_part}}" ]
     }
   } else {

@@ -1,0 +1,14 @@
+if (is_mac) {
+  if (target_cpu == "arm64") {
+    onnxruntime_library = [
+      "//third_party/webrtc/modules/audio_processing/pns/onnxruntime/lib/osx-arm64/libonnxruntime.1.13.1.dylib",
+      "//third_party/webrtc/modules/audio_processing/pns/onnxruntime/lib/osx-arm64/libonnxruntime.1.13.1.dylib.dSYM",
+    ]
+  } else if (target_cpu == "x64") {
+    onnxruntime_library = [
+      "//third_party/webrtc/modules/audio_processing/pns/onnxruntime/lib/osx-x86_64/libonnxruntime.1.13.1.dylib",
+      "//third_party/webrtc/modules/audio_processing/pns/onnxruntime/lib/osx-x86_64/libonnxruntime.1.13.1.dylib.dSYM",
+    ]
+  }
+} else if (is_win) {
+}
