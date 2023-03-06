@@ -4,6 +4,7 @@ chrome_100_percent.pak
 chrome_200_percent.pak
 electron.exe
 ffmpeg.dll
+onnxruntime.dll
 icudtl.dat
 libEGL.dll
 libGLESv2.dll

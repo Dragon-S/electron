@@ -11,4 +11,12 @@ if (is_mac) {
     ]
   }
 } else if (is_win) {
+  onnxruntime_library = [
+    "//third_party/webrtc/modules/audio_processing/pns/onnxruntime/lib/win-x64/onnxruntime.dll",
+    "//third_party/webrtc/modules/audio_processing/pns/onnxruntime/lib/win-x64/onnxruntime.lib",
+    "//third_party/webrtc/modules/audio_processing/pns/onnxruntime/lib/win-x64/onnxruntime.pdb.zip",
+    "//third_party/webrtc/modules/audio_processing/pns/onnxruntime/lib/win-x64/onnxruntime_providers_shared.dll",
+    "//third_party/webrtc/modules/audio_processing/pns/onnxruntime/lib/win-x64/onnxruntime_providers_shared.lib",
+    "//third_party/webrtc/modules/audio_processing/pns/onnxruntime/lib/win-x64/onnxruntime_providers_shared.pdb",
+  ]
 }

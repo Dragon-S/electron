@@ -15,4 +15,5 @@ rtc_use_h264 = proprietary_codecs
 # we build ffmpeg as a shared library.
 is_component_ffmpeg = true
 # 默认值为webrtc_personal_ns = is_win || is_mac，即Mac、Windows默认开启
-# webrtc_personal_ns = false
+# 此标记在webrtc.gni中
+# webrtc_personal_ns = true

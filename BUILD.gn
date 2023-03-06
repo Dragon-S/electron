@@ -10,6 +10,7 @@ import("//ppapi/buildflags/buildflags.gni")
 import("//printing/buildflags/buildflags.gni")
 import("//testing/test.gni")
 import("//third_party/ffmpeg/ffmpeg_options.gni")
+import("//third_party/webrtc/webrtc.gni")
 import("//tools/generate_library_loader/generate_library_loader.gni")
 import("//tools/grit/grit_rule.gni")
 import("//tools/grit/repack.gni")
@@ -28,7 +29,10 @@ import("filenames.gni")
 import("filenames.hunspell.gni")
 import("filenames.libcxx.gni")
 import("filenames.libcxxabi.gni")
-import("onnxruntime.lib.gni")
+
+if (webrtc_personal_ns) {
+  import("onnxruntime.lib.gni")
+}
 
 if (is_mac) {
   import("//build/config/mac/rules.gni")
@@ -362,11 +366,21 @@ templated_file("electron_version_file") {
   args_files = get_target_outputs(":electron_version_args")
 }
 
+if (webrtc_personal_ns) {
+  copy("onnxruntime_library_copy") {
+    sources = onnxruntime_library
+    outputs = [ "$root_build_dir/{{source_file_part}}" ]
+  }
+}
+
 group("electron_win32_resources") {
   public_deps = [
     ":electron_win_rc",
     ":electron_win_resource_files",
   ]
+  if (webrtc_personal_ns) {
+    public_deps += [ ":onnxruntime_library_copy" ]
+  }
 }
 
 action("electron_fuses") {
@@ -834,20 +848,16 @@ if (is_mac) {
     outputs = [ "{{bundle_resources_dir}}/{{source_file_part}}" ]
   }
 
-  copy("onnxruntime_library_copy") {
-    sources = onnxruntime_library
-    outputs = [ "$root_build_dir/{{source_file_part}}" ]
-  }
-
   if (!is_component_build && is_component_ffmpeg) {
     bundle_data("electron_framework_libraries") {
       sources = []
       public_deps = []
       sources += [ "$root_out_dir/libffmpeg.dylib" ]
       public_deps += [ "//third_party/ffmpeg:ffmpeg" ]
-
-      sources += [ "$root_out_dir/libonnxruntime.1.13.1.dylib" ]
-      public_deps += [ ":onnxruntime_library_copy" ]
+      if (webrtc_personal_ns) {
+        sources += [ "$root_out_dir/libonnxruntime.1.13.1.dylib" ]
+        public_deps += [ ":onnxruntime_library_copy" ]
+      }
 
       outputs = [ "{{bundle_contents_dir}}/Libraries/{{source_file_part}}" ]
     }
@@ -1275,6 +1285,10 @@ if (is_mac) {
 
     if (is_linux) {
       data_deps += [ "//components/crash/core/app:chrome_crashpad_handler" ]
+    }
+
+    if (is_win) {
+      data += [ "$root_out_dir/onnxruntime.dll" ]
     }
 
     if (is_win) {
