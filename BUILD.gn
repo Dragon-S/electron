@@ -1288,7 +1288,46 @@ if (is_mac) {
     }
 
     if (is_win) {
-      data += [ "$root_out_dir/onnxruntime.dll" ]
+      data += [
+        "$root_out_dir/onnxruntime.dll",
+        "$root_out_dir/api-ms-win-core-file-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-core-errorhandling-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-core-string-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-core-processenvironment-l1-1-0.dll",
+        "$root_out_dir/MSVCP140.dll",
+        "$root_out_dir/VCRUNTIME140_1.dll",
+        "$root_out_dir/VCRUNTIME140.dll",
+        "$root_out_dir/api-ms-win-crt-runtime-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-crt-stdio-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-crt-string-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-crt-convert-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-crt-filesystem-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-crt-heap-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-core-synch-l1-2-0.dll",
+        "$root_out_dir/api-ms-win-core-synch-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-core-rtlsupport-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-core-processthreads-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-core-processthreads-l1-1-1.dll",
+        "$root_out_dir/api-ms-win-core-profile-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-core-sysinfo-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-core-interlocked-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-core-debug-l1-1-0.dll",
+
+        # "$root_out_dir/api-ms-win-core-libraryloader-l1-2-0.dll",
+        # "$root_out_dir/api-ms-win-core-processtopology-obsolete-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-core-heap-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-core-memory-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-core-localization-l1-2-0.dll",
+        "$root_out_dir/api-ms-win-core-handle-l1-1-0.dll",
+
+        # "$root_out_dir/api-ms-win-core-shlwapi-legacy-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-eventing-provider-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-crt-time-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-crt-locale-l1-1-0.dll",
+        "$root_out_dir/api-ms-win-crt-math-l1-1-0.dll",
+
+        # "$root_out_dir/api-ms-win-core-heap-l2-1-0.dll",
+      ]
     }
 
     if (is_win) {
