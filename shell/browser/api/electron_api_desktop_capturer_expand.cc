@@ -58,6 +58,14 @@ void DesktopCapturerExpand::OnMediaFrameBoundChanged(const gfx::Rect& bound) {
   Emit("media-frame-bound-changed", new_bounds);
 }
 
+void DesktopCapturerExpand::OnSharedWindowMinimizedStateChanged(
+    const bool minimized) {
+  if (shared_window_minimized_ != minimized) {
+    shared_window_minimized_ = minimized;
+    Emit("shared-window-minimized-state-changed", shared_window_minimized_);
+  }
+}
+
 // static
 gin::Handle<DesktopCapturerExpand> DesktopCapturerExpand::Create(
     v8::Isolate* isolate) {

@@ -36,10 +36,13 @@ class DesktopCapturerExpand
   ~DesktopCapturerExpand() override;
 
   void OnMediaFrameBoundChanged(const gfx::Rect& bound) override;
+  void OnSharedWindowMinimizedStateChanged(const bool minimized) override;
 
  private:
   void StartObserving();
   void StopObserving();
+
+  bool shared_window_minimized_;
 };
 
 }  // namespace api

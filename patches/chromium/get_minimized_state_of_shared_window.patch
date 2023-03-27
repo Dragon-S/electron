@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Mon, 27 Mar 2023 10:36:30 +0800
+Subject: get minimized state of shared window
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+获取共享窗口最小化状态
+
+diff --git a/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.cc b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.cc
+index 457c0e0567ce1ad5e934d9dc8bc4749c48492064..e39077be7bb75bdca4dacec160ee5f4e707ae4cc 100644
+--- a/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.cc
++++ b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.cc
+@@ -28,3 +28,9 @@ void NativeDesktopMediaFrameBoundIndicator::OnMediaFrameBoundChanged(const gfx::
+     observer_->OnMediaFrameBoundChanged(bound);
+   }
+ }
++
++void NativeDesktopMediaFrameBoundIndicator::OnSharedWindowMinimizedStateChanged(const bool minimized) {
++  if (observer_ != nullptr) {
++    observer_->OnSharedWindowMinimizedStateChanged(minimized);
++  }
++}
+\ No newline at end of file
+diff --git a/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h
+index 14643e3e535cdb9a805c825aca88853b62b73e24..6c8a1803322a2fd2a3eaaed996d9cca88fb67588 100644
+--- a/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h
++++ b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h
+@@ -7,6 +7,7 @@
+ class NativeDesktopMediaFrameBoundObserver {
+  public:
+   virtual void OnMediaFrameBoundChanged(const gfx::Rect& bound) = 0;
++  virtual void OnSharedWindowMinimizedStateChanged(const bool minimized) = 0;
+ 
+  protected:
+   virtual ~NativeDesktopMediaFrameBoundObserver() {}
+@@ -21,6 +22,7 @@ class NativeDesktopMediaFrameBoundIndicator {
+   void StopObserving();
+ 
+   void OnMediaFrameBoundChanged(const gfx::Rect& bound);
++  void OnSharedWindowMinimizedStateChanged(const bool minimized);
+ 
+  private:
+   friend struct base::DefaultSingletonTraits<NativeDesktopMediaFrameBoundIndicator>;
+diff --git a/content/browser/media/capture/desktop_capture_device.cc b/content/browser/media/capture/desktop_capture_device.cc
+index 94b0b27b764b6c0043fc97e3adfc2afe81a8e267..079705044edc5ff96f7b00f60c60320db91a1207 100644
+--- a/content/browser/media/capture/desktop_capture_device.cc
++++ b/content/browser/media/capture/desktop_capture_device.cc
+@@ -90,6 +90,13 @@ void OnMediaFrameBoundChanged(const gfx::Rect& bound) {
+   media_frame_bound_indicator->OnMediaFrameBoundChanged(bound);
+ }
+ 
++void OnSharedWindowMinimizedStateChanged(bool minimized) {
++  DCHECK_CURRENTLY_ON(BrowserThread::UI);
++  NativeDesktopMediaFrameBoundIndicator* media_frame_bound_indicator =
++    NativeDesktopMediaFrameBoundIndicator::GetInstance();
++  media_frame_bound_indicator->OnSharedWindowMinimizedStateChanged(minimized);
++}
++
+ void BindWakeLockProvider(
+     mojo::PendingReceiver<device::mojom::WakeLockProvider> receiver) {
+   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+@@ -341,6 +348,15 @@ void DesktopCaptureDevice::Core::OnCaptureResult(
+           FROM_HERE, base::BindOnce(&OnMediaFrameBoundChanged, bound));
+     }
+ 
++    if (result == webrtc::DesktopCapturer::Result::ERROR_TEMPORARY) {
++      if ((capturer_type_ == DesktopMediaID::TYPE_WINDOW)
++        && (BrowserThread::IsThreadInitialized(BrowserThread::UI))) {
++        bool minimized = true;
++        GetUIThreadTaskRunner({})->PostTask(
++            FROM_HERE, base::BindOnce(&OnSharedWindowMinimizedStateChanged, minimized));
++      }
++    }
++
+     // Continue capturing frames in the temporary error case.
+     ScheduleNextCaptureFrame();
+     return;
+@@ -483,6 +499,13 @@ void DesktopCaptureDevice::Core::OnCaptureResult(
+     frame_color_space = icc_profile.GetColorSpace();
+   }
+ 
++  if ((capturer_type_ == DesktopMediaID::TYPE_WINDOW)
++    && (BrowserThread::IsThreadInitialized(BrowserThread::UI))) {
++    bool minimized = frame->shared_window_minimized();
++    GetUIThreadTaskRunner({})->PostTask(
++        FROM_HERE, base::BindOnce(&OnSharedWindowMinimizedStateChanged, minimized));
++  }
++
+   base::TimeTicks now = NowTicks();
+   if (first_ref_time_.is_null())
+     first_ref_time_ = now;

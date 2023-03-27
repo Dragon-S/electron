@@ -17,6 +17,15 @@ Returns:
 
 Emitted when the shared window bounds changes.
 
+### Event: 'shared-window-minimized-state-changed'
+
+Returns:
+
+* `event` Event
+* `minimized` boolean
+
+Emitted when the shared window minimized state changes.
+
 ## Methods
 
 The `desktopCapturerExpand` object has the following methods:
