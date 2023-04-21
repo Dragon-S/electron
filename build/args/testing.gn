@@ -12,6 +12,7 @@ symbol_level = 1
 # The initialization of the decoder depends on whether ffmpeg has
 # been built with H.264 support.
 rtc_use_h264 = proprietary_codecs
+
 # 默认值为webrtc_personal_ns = is_win || is_mac，即Mac、Windows默认开启
 # 此标记在webrtc.gni中
-# webrtc_personal_ns = false
+webrtc_personal_ns = false
