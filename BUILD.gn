@@ -1288,8 +1288,11 @@ if (is_mac) {
     }
 
     if (is_win) {
+      if (webrtc_personal_ns) {
+        data_deps += [ "$root_out_dir/onnxruntime.dll" ]
+      }
+
       data += [
-        "$root_out_dir/onnxruntime.dll",
         "$root_out_dir/api-ms-win-core-file-l1-1-0.dll",
         "$root_out_dir/api-ms-win-core-errorhandling-l1-1-0.dll",
         "$root_out_dir/api-ms-win-core-string-l1-1-0.dll",

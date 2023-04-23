@@ -35,7 +35,6 @@ api-ms-win-crt-locale-l1-1-0.dll
 api-ms-win-crt-math-l1-1-0.dll
 electron.exe
 ffmpeg.dll
-onnxruntime.dll
 icudtl.dat
 libEGL.dll
 libGLESv2.dll
