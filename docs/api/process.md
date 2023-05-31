@@ -123,6 +123,10 @@ A `string` representing Chrome's version string.
 
 A `string` representing Electron's version string.
 
+### `process.versions.myElectron` _Readonly_
+
+A `string` representing My Electron's version string.
+
 ### `process.windowsStore` _Readonly_
 
 A `boolean`. If the app is running as a Windows Store app (appx), this property is `true`,
