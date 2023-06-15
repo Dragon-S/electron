@@ -16,3 +16,7 @@ rtc_use_h264 = proprietary_codecs
 # 默认值为webrtc_personal_ns = is_win || is_mac，即Mac、Windows默认开启
 # 此标记在webrtc.gni中
 webrtc_personal_ns = false
+
+# 默认值为apm_debug_dump = false，此标记在webrtc.gni中，用于开启音频处理模块中
+# 是否生成音频dump文件
+apm_debug_dump = false
