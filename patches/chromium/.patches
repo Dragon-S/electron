@@ -166,3 +166,4 @@ wayland_ensure_dnd_buffer_size_is_a_multiple_of_scale.patch
 m112_cherry_pick_libxml_cve_fix.patch
 m112_fix_scopedobservation_uaf_in.patch
 blurry_screen_share_from_chrome.patch
+windows_webcodec_encoding_aac_lost_decs.patch

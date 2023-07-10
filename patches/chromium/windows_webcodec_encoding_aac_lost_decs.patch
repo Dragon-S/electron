@@ -1,0 +1,1621 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Mon, 10 Jul 2023 10:44:45 +0800
+Subject: windows webcodec encoding aac lost decs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+1、chromium108--114
+/third_party/blink/renderer/modules/webcodecs/audio_encoder.cc
+修改记录
+5ef816c webcodecs: Add ADTS support to AudioToolboxAudioEncoder
+2cebedb Revert "webcodecs: Add ADTS support to AudioToolboxAudioEncoder"
+6c30ad1 webcodecs: Add ADTS support to AudioToolboxAudioEncoder
+73cb3be Raw AAC support in MF Audio Encoder
+5bb8922 webcodecs: Web IDL declaration for AacEncoderConfig
+0045159 Add OpusEncoderConfig
+
+2、与上面修改相关的修改 media/formats/mp4/aac.cc
+5b9c6c8 media: Fix MP4StreamParser::PrepareAACBuffer()
+
+diff --git a/content/test/data/gpu/webcodecs/audio-encode-decode.html b/content/test/data/gpu/webcodecs/audio-encode-decode.html
+index 3ec01e5b8ad936465d345b124ad927742550ca70..816d889eebe2bb5db4ae29e830e26351650d2d08 100644
+--- a/content/test/data/gpu/webcodecs/audio-encode-decode.html
++++ b/content/test/data/gpu/webcodecs/audio-encode-decode.html
+@@ -38,8 +38,14 @@ async function main(args) {
+     codec: args.codec,
+     sampleRate: args.sample_rate,
+     numberOfChannels: args.channels,
+-    bitrate: 96000,
++    bitrate: 96000
+   };
++
++  if (args.aac_format) {
++    config.aac = {
++      format : args.aac_format
++    };
++  }
+   let decoder_config = null;
+ 
+   let support = await AudioEncoder.isConfigSupported(config);
+@@ -92,6 +98,13 @@ async function main(args) {
+   timestamp_us += 2 * (2112 / config.sampleRate) * 1_000_000;
+ 
+   TEST.assert(decoder_config != null, "No decoder config");
++  if (args.aac_format == "adts") {
++    TEST.assert(decoder_config.description == null, "ADTS should carry desc");
++  } else if (args.aac_format == "aac") {
++    TEST.assert(decoder_config.description != null, "AAC should carry desc");
++    TEST.assert(decoder_config.description.byteLength > 1,
++                "AAC desc is too short");
++  }
+   TEST.assert(outputs.length > 0, "no outputs");
+   TEST.assert(outputs[0].timestamp == 0, "first chunk timestamp non zero");
+ 
+@@ -102,6 +115,12 @@ async function main(args) {
+         `chunk timestamp is too small. ${timestamp_us} vs ${chunk.timestamp}`);
+     TEST.assert(chunk.duration >= 0, "chunk duration is zero");
+     total_encoded_duration += chunk.duration;
++    let buf = new ArrayBuffer(chunk.byteLength);
++    chunk.copyTo(buf);
++    if (args.aac_format == "adts") {
++      let adts_header = new DataView(buf).getUint8(0);
++      TEST.assert(adts_header == 0xff,  "Incorrect ADTS header");
++    }
+   }
+ 
+   // The total duration might be padded with silence.
+diff --git a/content/test/gpu/gpu_tests/webcodecs_integration_test.py b/content/test/gpu/gpu_tests/webcodecs_integration_test.py
+index 141688127234863c822d774af1cc4d7e6f4851b4..ab6929ad93d5783c11fb8f4a6e80ea4216014f39 100644
+--- a/content/test/gpu/gpu_tests/webcodecs_integration_test.py
++++ b/content/test/gpu/gpu_tests/webcodecs_integration_test.py
+@@ -88,7 +88,19 @@ class WebCodecsIntegrationTest(gpu_integration_test.GpuIntegrationTest):
+         'sample_rate':
+         48000,
+         'channels':
+-        2
++        2,
++        'aac_format':
++        'aac'
++    }])
++    yield ('WebCodecs_AudioEncoding_AAC_LC_ADTS', 'audio-encode-decode.html', [{
++        'codec':
++        'mp4a.67',
++        'sample_rate':
++        48000,
++        'channels':
++        2,
++        'aac_format':
++        'adts'
+     }])
+ 
+   @classmethod
+diff --git a/media/audio/audio_encoders_unittest.cc b/media/audio/audio_encoders_unittest.cc
+index c17c505372856b5af8f76c2966a9389814745988..4e5fd01ee14e13e03bc539d416ba971ef813097a 100644
+--- a/media/audio/audio_encoders_unittest.cc
++++ b/media/audio/audio_encoders_unittest.cc
+@@ -51,9 +51,9 @@ namespace {
+ 
+ constexpr int kAudioSampleRateWithDelay = 647744;
+ 
+-// This is the preferred opus buffer duration (60 ms), which corresponds to a
+-// value of 2880 frames per buffer at a sample rate of 48 khz.
+-constexpr base::TimeDelta kOpusBufferDuration = base::Milliseconds(60);
++// This is the preferred opus buffer duration (20 ms), which corresponds to a
++// value of 960 frames per buffer at a sample rate of 48 khz.
++constexpr base::TimeDelta kOpusBufferDuration = base::Milliseconds(20);
+ 
+ #if HAS_AAC_ENCODER
+ // AAC puts 1024 PCM samples into each AAC frame, which corresponds to a
+@@ -78,8 +78,6 @@ constexpr TestAudioParams kTestAudioParamsOpus[] = {
+     {AudioCodec::kOpus, 1, 22050},
+     {AudioCodec::kOpus, 2, 44100},
+     {AudioCodec::kOpus, 2, 96000},
+-    {AudioCodec::kOpus, 1, 48000},
+-    {AudioCodec::kOpus, 2, 48000},
+     {AudioCodec::kOpus, 2, kAudioSampleRateWithDelay},
+ };
+ 
+@@ -547,17 +545,6 @@ TEST_P(AudioEncodersTest, Timestamps) {
+ 
+     total_frames += GetExpectedPadding();
+ 
+-    // The encoder will have multiple outputs per input if `num_frames` is
+-    // larger than `frames_per_buffer_`, and fewer outputs per input if it is
+-    // smaller.
+-    size_t expected_outputs = total_frames / frames_per_buffer_;
+-
+-    // Round up if the division truncated. This is because the encoder will pad
+-    // the final buffer to produce output, even if there aren't
+-    // `frames_per_buffer_` left.
+-    if (total_frames % frames_per_buffer_ != 0)
+-      expected_outputs++;
+-
+     base::TimeTicks current_timestamp;
+     for (int i = 0; i < kCount; ++i) {
+       ProduceAudioAndEncode(current_timestamp, num_frames);
+@@ -567,7 +554,15 @@ TEST_P(AudioEncodersTest, Timestamps) {
+     FlushAndVerifyStatus();
+ 
+     ValidateDoneCallbacksRun();
+-    EXPECT_EQ(expected_outputs, timestamps.size());
++
++    // The encoder will have multiple outputs per input if `num_frames` is
++    // larger than `frames_per_buffer_`, and fewer outputs per input if it is
++    // smaller.
++    size_t expected_outputs = total_frames / frames_per_buffer_;
++
++    // The encoder might output an extra buffer, due to padding.
++    EXPECT_TRUE(timestamps.size() == expected_outputs ||
++                timestamps.size() == expected_outputs + 1);
+ 
+     // We must use an `AudioTimestampHelper` to verify the returned timestamps
+     // to avoid rounding errors.
+@@ -702,9 +697,9 @@ TEST_P(AudioOpusEncoderTest, ExtraData) {
+ 
+ TEST_P(AudioOpusEncoderTest, FullCycleEncodeDecode) {
+   const int kOpusDecoderSampleRate = 48000;
+-  const int kOpusDecoderFramesPerBuffer = kOpusBufferDuration.InMicroseconds() *
+-                                          kOpusDecoderSampleRate /
+-                                          base::Time::kMicrosecondsPerSecond;
++  const int kOpusDecoderFramesPerBuffer = AudioTimestampHelper::TimeToFrames(
++      kOpusBufferDuration, kOpusDecoderSampleRate);
++
+   int error;
+   OpusDecoder* opus_decoder =
+       opus_decoder_create(kOpusDecoderSampleRate, options_.channels, &error);
+@@ -739,17 +734,96 @@ TEST_P(AudioOpusEncoderTest, FullCycleEncodeDecode) {
+   EXPECT_GE(total_frames, frames_per_buffer_);
+   EXPECT_EQ(1, encode_callback_count);
+ 
+-  // If there is leftover data in the encoder, flush it. We can have leftover
+-  // data from needing to push more than |frames_per_buffer_| to get one output.
+-  if (total_frames > frames_per_buffer_) {
+-    FlushAndVerifyStatus();
+-    EXPECT_EQ(2, encode_callback_count);
+-  }
++  // Flush the leftover data in the encoder, due to encoder delay.
++  FlushAndVerifyStatus();
+ 
+   opus_decoder_destroy(opus_decoder);
+   opus_decoder = nullptr;
+ }
+ 
++// Tests we can configure the AudioOpusEncoder's extra options.
++TEST_P(AudioOpusEncoderTest, FullCycleEncodeDecode_OpusOptions) {
++  // TODO(crbug.com/1378399): Test an OpusOptions::frame_duration which forces
++  // repacketization.
++  constexpr media::AudioEncoder::OpusOptions kTestOpusOptions[] = {
++      // Base case
++      {.frame_duration = base::Milliseconds(20),
++       .complexity = 10,
++       .packet_loss_perc = 0,
++       .use_in_band_fec = false,
++       .use_dtx = false},
++
++      // Use inband-FEC
++      {.frame_duration = base::Microseconds(2500),
++       .complexity = 0,
++       .packet_loss_perc = 10,
++       .use_in_band_fec = true,
++       .use_dtx = false},
++
++      // Use DTX
++      {.frame_duration = base::Milliseconds(60),
++       .complexity = 5,
++       .packet_loss_perc = 0,
++       .use_in_band_fec = false,
++       .use_dtx = true},
++
++      // Use inband-FEC and DTX
++      {.frame_duration = base::Milliseconds(5),
++       .complexity = 5,
++       .packet_loss_perc = 20,
++       .use_in_band_fec = true,
++       .use_dtx = true},
++  };
++
++  for (const AudioEncoder::OpusOptions& opus_options : kTestOpusOptions) {
++    const int kOpusDecoderSampleRate = 48000;
++
++    // Override the work done in Setup().
++    encoder_ = std::make_unique<AudioOpusEncoder>();
++    options_.opus = opus_options;
++    buffer_duration_ = opus_options.frame_duration;
++    frames_per_buffer_ = AudioTimestampHelper::TimeToFrames(
++        buffer_duration_, options_.sample_rate);
++
++    int decoder_frames_per_buffer = AudioTimestampHelper::TimeToFrames(
++        buffer_duration_, kOpusDecoderSampleRate);
++
++    int error;
++    OpusDecoder* opus_decoder =
++        opus_decoder_create(kOpusDecoderSampleRate, options_.channels, &error);
++    ASSERT_TRUE(error == OPUS_OK && opus_decoder);
++
++    std::vector<float> buffer(decoder_frames_per_buffer * options_.channels);
++    auto verify_opus_encoding = [&](EncodedAudioBuffer output, MaybeDesc) {
++      // Use the libopus decoder to decode the |encoded_data| and check we
++      // get the expected number of frames per buffer.
++      EXPECT_EQ(decoder_frames_per_buffer,
++                opus_decode_float(opus_decoder, output.encoded_data.get(),
++                                  output.encoded_data_size, buffer.data(),
++                                  decoder_frames_per_buffer, 0));
++    };
++
++    InitializeEncoder(base::BindLambdaForTesting(verify_opus_encoding));
++
++    base::TimeTicks time;
++    int total_frames = 0;
++
++    // Push data until we have a decoded output.
++    while (total_frames < min_number_input_frames_needed_) {
++      total_frames += ProduceAudioAndEncode(time);
++      time += buffer_duration_;
++
++      RunLoop();
++    }
++
++    EXPECT_GE(total_frames, frames_per_buffer_);
++    FlushAndVerifyStatus();
++
++    opus_decoder_destroy(opus_decoder);
++    opus_decoder = nullptr;
++  }
++}
++
+ TEST_P(AudioOpusEncoderTest, VariableChannelCounts) {
+   constexpr int kTestToneFrequency = 440;
+   SineWaveAudioSource sources[] = {
+diff --git a/media/audio/audio_opus_encoder.cc b/media/audio/audio_opus_encoder.cc
+index 235a2356b6fb6304287599c3baf906024197ed12..26569d6f229ac8a402c642fe8829cf67d0300982 100644
+--- a/media/audio/audio_opus_encoder.cc
++++ b/media/audio/audio_opus_encoder.cc
+@@ -12,6 +12,7 @@
+ #include "base/numerics/checked_math.h"
+ #include "base/strings/stringprintf.h"
+ #include "base/time/time.h"
++#include "build/build_config.h"
+ #include "media/base/bind_to_current_loop.h"
+ #include "media/base/channel_mixer.h"
+ #include "media/base/converting_audio_fifo.h"
+@@ -32,19 +33,24 @@ constexpr int kOpusMaxDataBytes = 4000;
+ // to have: https://wiki.xiph.org/MatroskaOpus.
+ constexpr int kOpusPreferredSamplingRate = 48000;
+ 
+-// For Opus, we try to encode 60ms, the maximum Opus buffer, for quality
+-// reasons.
+-constexpr int kOpusPreferredBufferDurationMs = 60;
++// For Opus, 20ms is the suggested default.
++constexpr base::TimeDelta kDefaultOpusBufferDuration = base::Milliseconds(20);
+ 
+ // Deletes the libopus encoder instance pointed to by |encoder_ptr|.
+ inline void OpusEncoderDeleter(OpusEncoder* encoder_ptr) {
+   opus_encoder_destroy(encoder_ptr);
+ }
+ 
+-AudioParameters CreateInputParams(const AudioEncoder::Options& options) {
+-  const int frames_per_buffer = options.sample_rate *
+-                                kOpusPreferredBufferDurationMs /
+-                                base::Time::kMillisecondsPerSecond;
++base::TimeDelta GetFrameDuration(
++    const absl::optional<AudioEncoder::OpusOptions> opus_options) {
++  return opus_options.has_value() ? opus_options.value().frame_duration
++                                  : kDefaultOpusBufferDuration;
++}
++
++AudioParameters CreateInputParams(const AudioEncoder::Options& options,
++                                  base::TimeDelta frame_duration) {
++  const int frames_per_buffer =
++      AudioTimestampHelper::TimeToFrames(frame_duration, options.sample_rate);
+   AudioParameters result(media::AudioParameters::AUDIO_PCM_LINEAR,
+                          {media::CHANNEL_LAYOUT_DISCRETE, options.channels},
+                          options.sample_rate, frames_per_buffer);
+@@ -53,7 +59,8 @@ AudioParameters CreateInputParams(const AudioEncoder::Options& options) {
+ 
+ // Creates the audio parameters of the converted audio format that Opus prefers,
+ // which will be used as the input to the libopus encoder.
+-AudioParameters CreateOpusCompatibleParams(const AudioParameters& params) {
++AudioParameters CreateOpusCompatibleParams(const AudioParameters& params,
++                                           base::TimeDelta frame_duration) {
+   // third_party/libopus supports up to 2 channels (see implementation of
+   // opus_encoder_create()): force |converted_params| to at most those.
+   // Also, the libopus encoder can accept sample rates of 8, 12, 16, 24, and the
+@@ -64,8 +71,8 @@ AudioParameters CreateOpusCompatibleParams(const AudioParameters& params) {
+                          input_rate == 16000 || input_rate == 24000)
+                             ? input_rate
+                             : kOpusPreferredSamplingRate;
+-  const int frames_per_buffer = used_rate * kOpusPreferredBufferDurationMs /
+-                                base::Time::kMillisecondsPerSecond;
++  const int frames_per_buffer =
++      AudioTimestampHelper::TimeToFrames(frame_duration, used_rate);
+ 
+   AudioParameters result(
+       AudioParameters::AUDIO_PCM_LOW_LATENCY,
+@@ -100,14 +107,15 @@ void AudioOpusEncoder::Initialize(const Options& options,
+   }
+ 
+   options_ = options;
+-  input_params_ = CreateInputParams(options);
++  const base::TimeDelta frame_duration = GetFrameDuration(options_.opus);
++  input_params_ = CreateInputParams(options, frame_duration);
+   if (!input_params_.IsValid()) {
+     std::move(done_cb).Run(EncoderStatus::Codes::kEncoderInitializationError);
+     return;
+   }
+ 
+-  converted_params_ = CreateOpusCompatibleParams(input_params_);
+-  if (!input_params_.IsValid()) {
++  converted_params_ = CreateOpusCompatibleParams(input_params_, frame_duration);
++  if (!converted_params_.IsValid()) {
+     std::move(done_cb).Run(EncoderStatus::Codes::kEncoderInitializationError);
+     return;
+   }
+@@ -122,7 +130,7 @@ void AudioOpusEncoder::Initialize(const Options& options,
+       std::make_unique<AudioTimestampHelper>(converted_params_.sample_rate());
+   buffer_.resize(converted_params_.channels() *
+                  converted_params_.frames_per_buffer());
+-  auto status_or_encoder = CreateOpusEncoder();
++  auto status_or_encoder = CreateOpusEncoder(options.opus);
+   if (status_or_encoder.has_error()) {
+     std::move(done_cb).Run(std::move(status_or_encoder).error());
+     return;
+@@ -200,7 +208,7 @@ void AudioOpusEncoder::Encode(std::unique_ptr<AudioBus> audio_bus,
+     timestamp_tracker_->SetBaseTimestamp(capture_time - base::TimeTicks());
+ 
+   // This might synchronously call OnFifoOutput().
+-  fifo_->Push(std::move(audio_bus));
++  fifo_has_data_ = true;
+ 
+   if (current_done_cb_) {
+     // Is |current_done_cb_| is null, it means OnFifoOutput() has already
+@@ -221,7 +229,26 @@ void AudioOpusEncoder::Flush(EncoderStatusCB done_cb) {
+ 
+   current_done_cb_ = std::move(done_cb);
+ 
+-  fifo_->Flush();
++  if (fifo_has_data_) {
++    int32_t encoder_delay = 0;
++    opus_encoder_ctl(opus_encoder_.get(), OPUS_GET_LOOKAHEAD(&encoder_delay));
++
++    // Add enough silence to the queue to guarantee that all audible frames will
++    // be output from the encoder.
++    if (encoder_delay) {
++      int encoder_delay_in_input_frames = std::ceil(
++          static_cast<double>(encoder_delay) * input_params_.sample_rate() /
++          converted_params_.sample_rate());
++
++      auto silent_delay = AudioBus::Create(input_params_.channels(),
++                                           encoder_delay_in_input_frames);
++      silent_delay->Zero();
++      fifo_->Push(std::move(silent_delay));
++    }
++
++    fifo_->Flush();
++    fifo_has_data_ = false;
++  }
+ 
+   timestamp_tracker_->SetBaseTimestamp(kNoTimestamp);
+   if (current_done_cb_) {
+@@ -286,7 +313,8 @@ void AudioOpusEncoder::OnFifoOutput(AudioBus* audio_bus) {
+ 
+ // Creates and returns the libopus encoder instance. Returns nullptr if the
+ // encoder creation fails.
+-EncoderStatus::Or<OwnedOpusEncoder> AudioOpusEncoder::CreateOpusEncoder() {
++EncoderStatus::Or<OwnedOpusEncoder> AudioOpusEncoder::CreateOpusEncoder(
++    const absl::optional<AudioEncoder::OpusOptions>& opus_options) {
+   int opus_result;
+   OwnedOpusEncoder encoder(
+       opus_encoder_create(converted_params_.sample_rate(),
+@@ -294,7 +322,7 @@ EncoderStatus::Or<OwnedOpusEncoder> AudioOpusEncoder::CreateOpusEncoder() {
+                           &opus_result),
+       OpusEncoderDeleter);
+ 
+-  if (opus_result < 0) {
++  if (opus_result < 0 || !encoder) {
+     return EncoderStatus(
+         EncoderStatus::Codes::kEncoderInitializationError,
+         base::StringPrintf(
+@@ -303,15 +331,54 @@ EncoderStatus::Or<OwnedOpusEncoder> AudioOpusEncoder::CreateOpusEncoder() {
+             converted_params_.channels()));
+   }
+ 
+-  int bitrate =
++  const int bitrate =
+       options_.bitrate.has_value() ? options_.bitrate.value() : OPUS_AUTO;
+-  if (encoder &&
+-      opus_encoder_ctl(encoder.get(), OPUS_SET_BITRATE(bitrate)) != OPUS_OK) {
++  if (opus_encoder_ctl(encoder.get(), OPUS_SET_BITRATE(bitrate)) != OPUS_OK) {
+     return EncoderStatus(
+         EncoderStatus::Codes::kEncoderInitializationError,
+         base::StringPrintf("Failed to set Opus bitrate: %d", bitrate));
+   }
+ 
++  // The remaining parameters are all purely optional.
++  if (!opus_options.has_value())
++    return encoder;
++
++  const unsigned int complexity = opus_options.value().complexity;
++  DCHECK_LE(complexity, 10u);
++  if (opus_encoder_ctl(encoder.get(), OPUS_SET_COMPLEXITY(complexity)) !=
++      OPUS_OK) {
++    return EncoderStatus(
++        EncoderStatus::Codes::kEncoderInitializationError,
++        base::StringPrintf("Failed to set Opus complexity: %d", complexity));
++  }
++
++  const unsigned int packet_loss_perc = opus_options.value().packet_loss_perc;
++  DCHECK_LE(packet_loss_perc, 100u);
++  if (opus_encoder_ctl(encoder.get(), OPUS_SET_PACKET_LOSS_PERC(
++                                          packet_loss_perc)) != OPUS_OK) {
++    return EncoderStatus(
++        EncoderStatus::Codes::kEncoderInitializationError,
++        base::StringPrintf("Failed to set Opus packetlossperc: %d",
++                           packet_loss_perc));
++  }
++
++  const unsigned int use_in_band_fec =
++      opus_options.value().use_in_band_fec ? 1 : 0;
++  if (opus_encoder_ctl(encoder.get(), OPUS_SET_INBAND_FEC(use_in_band_fec)) !=
++      OPUS_OK) {
++    return EncoderStatus(EncoderStatus::Codes::kEncoderInitializationError,
++                         base::StringPrintf("Failed to set Opus inband FEC: %d",
++                                            use_in_band_fec));
++  }
++
++  const unsigned int use_dtx = opus_options.value().use_dtx ? 1 : 0;
++  if (opus_encoder_ctl(encoder.get(), OPUS_SET_INBAND_FEC(use_dtx)) !=
++      OPUS_OK) {
++    return EncoderStatus(
++        EncoderStatus::Codes::kEncoderInitializationError,
++        base::StringPrintf("Failed to set Opus DTX: %d", use_dtx));
++  }
++
+   return encoder;
+ }
+ 
+diff --git a/media/audio/audio_opus_encoder.h b/media/audio/audio_opus_encoder.h
+index 846a6618e91b14ed0d30ca3a1e1086c1f85445ed..a3cd8eb3e5fce5e8129840ae35af5ee385efb68b 100644
+--- a/media/audio/audio_opus_encoder.h
++++ b/media/audio/audio_opus_encoder.h
+@@ -54,7 +54,8 @@ class MEDIA_EXPORT AudioOpusEncoder : public AudioEncoder {
+ 
+   CodecDescription PrepareExtraData();
+ 
+-  EncoderStatus::Or<OwnedOpusEncoder> CreateOpusEncoder();
++  EncoderStatus::Or<OwnedOpusEncoder> CreateOpusEncoder(
++      const absl::optional<AudioEncoder::OpusOptions>& opus_options);
+ 
+   AudioParameters input_params_;
+ 
+@@ -64,6 +65,7 @@ class MEDIA_EXPORT AudioOpusEncoder : public AudioEncoder {
+   AudioParameters converted_params_;
+ 
+   std::unique_ptr<ConvertingAudioFifo> fifo_;
++  bool fifo_has_data_ = false;
+ 
+   // Used to mix incoming Encode() buffers to match the expect input channel
+   // count.
+diff --git a/media/base/audio_encoder.h b/media/base/audio_encoder.h
+index 50dfaf9549511d083dfda411ffd388962170b34c..2e66395e8004b4ab511a8d881f1e708cbbc76ed8 100644
+--- a/media/base/audio_encoder.h
++++ b/media/base/audio_encoder.h
+@@ -61,6 +61,19 @@ struct MEDIA_EXPORT EncodedAudioBuffer {
+ // Defines an interface for audio encoders.
+ class MEDIA_EXPORT AudioEncoder {
+  public:
++  struct MEDIA_EXPORT OpusOptions {
++    base::TimeDelta frame_duration;
++    unsigned int complexity;
++    unsigned int packet_loss_perc;
++    bool use_in_band_fec;
++    bool use_dtx;
++  };
++
++  enum class AacOutputFormat { AAC, ADTS };
++  struct MEDIA_EXPORT AacOptions {
++    AacOutputFormat format;
++  };
++
+   struct MEDIA_EXPORT Options {
+     Options();
+     Options(const Options&);
+@@ -73,6 +86,9 @@ class MEDIA_EXPORT AudioEncoder {
+     int channels;
+ 
+     int sample_rate;
++
++    absl::optional<OpusOptions> opus;
++    absl::optional<AacOptions> aac;
+   };
+ 
+   // A sequence of codec specific bytes, commonly known as extradata.
+diff --git a/media/filters/mac/audio_toolbox_audio_encoder.cc b/media/filters/mac/audio_toolbox_audio_encoder.cc
+index ffd30ec7a3e9292ae2eeda80f186ae1c61bcdf0b..94578bd4e41f89abcb5c23f12258b7f2ba3ef714 100644
+--- a/media/filters/mac/audio_toolbox_audio_encoder.cc
++++ b/media/filters/mac/audio_toolbox_audio_encoder.cc
+@@ -13,6 +13,7 @@
+ #include "media/base/audio_timestamp_helper.h"
+ #include "media/base/converting_audio_fifo.h"
+ #include "media/base/encoder_status.h"
++#include "media/base/media_util.h"
+ #include "media/base/timestamp_constants.h"
+ #include "media/formats/mp4/es_descriptor.h"
+ 
+@@ -299,15 +300,12 @@ void AudioToolboxAudioEncoder::DoEncode(AudioBus* input_bus) {
+   input_data.flushing = is_flushing;
+ 
+   do {
+-    // Note: This doesn't zero initialize the buffer.
+-    // FIXME: This greedily allocates, we should preserve the buffer for the
+-    // next call if we don't fill it.
+-    std::unique_ptr<uint8_t[]> packet_buffer(new uint8_t[max_packet_size_]);
++    temp_output_buf_.resize(max_packet_size_);
+ 
+     AudioBufferList output_buffer_list = {};
+     output_buffer_list.mNumberBuffers = 1;
+     output_buffer_list.mBuffers[0].mNumberChannels = channel_count_;
+-    output_buffer_list.mBuffers[0].mData = packet_buffer.get();
++    output_buffer_list.mBuffers[0].mData = temp_output_buf_.data();
+     output_buffer_list.mBuffers[0].mDataByteSize = max_packet_size_;
+ 
+     // Encodes |num_packets| into |packet_buffer| by calling the
+@@ -335,24 +333,60 @@ void AudioToolboxAudioEncoder::DoEncode(AudioBus* input_bus) {
+     }
+ 
+     DCHECK_LE(packet_description.mDataByteSize, max_packet_size_);
++    temp_output_buf_.resize(packet_description.mDataByteSize);
+ 
+     // All AAC-LC packets are 1024 frames in size. Note: If other AAC profiles
+     // are added later, this value must be updated.
+     auto num_frames = kAacFramesPerBuffer * num_packets;
+     DVLOG(1) << __func__ << ": Output: num_frames=" << num_frames;
+ 
++    bool adts_conversion_ok = true;
++    auto format = options_.aac.value_or(AacOptions()).format;
++    absl::optional<CodecDescription> desc;
++    if (timestamp_helper_->frame_count() == 0) {
++      if (format == AudioEncoder::AacOutputFormat::AAC) {
++        desc = codec_desc_;
++      } else {
++#if BUILDFLAG(USE_PROPRIETARY_CODECS)
++        NullMediaLog log;
++        adts_conversion_ok = aac_config_parser_.Parse(codec_desc_, &log);
++#else
++        adts_conversion_ok = false;
++#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
++      }
++    }
++
++#if BUILDFLAG(USE_PROPRIETARY_CODECS)
++    if (format == AudioEncoder::AacOutputFormat::ADTS) {
++      int header_size;
++      // TODO(https://crbug.com/1407013) Refactor AAC::ConvertEsdsToADTS() to
++      // work with more flexible buffers and not only with an std::vector.
++      // This will allow us to save extra memcpy-s that we are forced to do in
++      // this code.
++      adts_conversion_ok =
++          aac_config_parser_.ConvertEsdsToADTS(&temp_output_buf_, &header_size);
++    }
++#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
++    if (!adts_conversion_ok) {
++      OSSTATUS_DLOG(ERROR, result) << "Conversion to ADTS failed";
++      std::move(current_done_cb_)
++          .Run(EncoderStatus::Codes::kEncoderFailedEncode);
++      return;
++    }
++
++    std::unique_ptr<uint8_t[]> packet_buffer(
++        new uint8_t[temp_output_buf_.size()]);
++    std::memcpy(packet_buffer.get(), temp_output_buf_.data(),
++                temp_output_buf_.size());
++
+     EncodedAudioBuffer encoded_buffer(
+         AudioParameters(AudioParameters::AUDIO_PCM_LINEAR,
+                         ChannelLayoutConfig::Guess(channel_count_),
+                         sample_rate_, num_frames),
+-        std::move(packet_buffer), packet_description.mDataByteSize,
++        std::move(packet_buffer), temp_output_buf_.size(),
+         base::TimeTicks() + timestamp_helper_->GetTimestamp(),
+         timestamp_helper_->GetFrameDuration(num_frames));
+ 
+-    absl::optional<CodecDescription> desc;
+-    if (timestamp_helper_->frame_count() == 0)
+-      desc = codec_desc_;
+-
+     timestamp_helper_->AddFrames(num_frames);
+     output_cb_.Run(std::move(encoded_buffer), desc);
+   } while (is_flushing);  // Only encode once when we aren't flushing.
+diff --git a/media/filters/mac/audio_toolbox_audio_encoder.h b/media/filters/mac/audio_toolbox_audio_encoder.h
+index 8acc616ee5e7f76ab7b625fb296a3b7760b08755..aae53cb0d1fe931813b95f63b79479997c2b7f34 100644
+--- a/media/filters/mac/audio_toolbox_audio_encoder.h
++++ b/media/filters/mac/audio_toolbox_audio_encoder.h
+@@ -12,6 +12,8 @@
+ #include "media/base/audio_bus.h"
+ #include "media/base/audio_encoder.h"
+ #include "media/base/media_export.h"
++#include "media/formats/mp4/aac.h"
++#include "media/media_buildflags.h"
+ 
+ namespace media {
+ class AudioTimestampHelper;
+@@ -63,6 +65,10 @@ class MEDIA_EXPORT AudioToolboxAudioEncoder : public AudioEncoder {
+   std::unique_ptr<AudioTimestampHelper> timestamp_helper_;
+ 
+   std::vector<uint8_t> codec_desc_;
++  std::vector<uint8_t> temp_output_buf_;
++#if BUILDFLAG(USE_PROPRIETARY_CODECS)
++  mp4::AAC aac_config_parser_;
++#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ 
+   // Ensures the data sent to Encode() matches the encoder's input format.
+   std::unique_ptr<ConvertingAudioFifo> fifo_;
+diff --git a/media/formats/mp4/aac.cc b/media/formats/mp4/aac.cc
+index bf09f75de0d4d4601034198b7c9f8bf651bec410..8780fc5ff4410ec19fea196623d60d22867c17a3 100644
+--- a/media/formats/mp4/aac.cc
++++ b/media/formats/mp4/aac.cc
+@@ -183,11 +183,14 @@ ChannelLayout AAC::GetChannelLayout(bool sbr_in_mimetype) const {
+   return channel_layout_;
+ }
+ 
+-bool AAC::ConvertEsdsToADTS(std::vector<uint8_t>* buffer) const {
++bool AAC::ConvertEsdsToADTS(std::vector<uint8_t>* buffer,
++                            int* adts_header_size) const {
+   // Don't append ADTS header for XHE-AAC; it doesn't have enough bits to signal
+   // the correct profile.
+-  if (profile_ == kXHeAAcType)
++  if (profile_ == kXHeAAcType) {
++    *adts_header_size = 0;
+     return true;
++  }
+ 
+   size_t size = buffer->size() + kADTSHeaderMinSize;
+ 
+@@ -210,6 +213,7 @@ bool AAC::ConvertEsdsToADTS(std::vector<uint8_t>* buffer) const {
+   adts[5] = ((size & 7) << 5) + 0x1f;
+   adts[6] = 0xfc;
+ 
++  *adts_header_size = kADTSHeaderMinSize;
+   return true;
+ }
+ 
+diff --git a/media/formats/mp4/aac.h b/media/formats/mp4/aac.h
+index e4b80ab226c2e1bf1e57560817be51139aaa0850..fa3ff54ad98e861e179ce2b1adc09dd088a7756b 100644
+--- a/media/formats/mp4/aac.h
++++ b/media/formats/mp4/aac.h
+@@ -51,10 +51,12 @@ class MEDIA_EXPORT AAC {
+   ChannelLayout GetChannelLayout(bool sbr_in_mimetype) const;
+ 
+   // This function converts a raw AAC frame into an AAC frame with an ADTS
+-  // header. On success, the function returns true and stores the converted data
+-  // in the buffer. The function returns false on failure and leaves the buffer
++  // header. On success, the function returns true, stores the converted data
++  // in the `buffer`, and sets the header size in `adts_header_size`. Otherwise
++  // the function returns false and leaves the `buffer` and `adts_header_size`
+   // unchanged.
+-  bool ConvertEsdsToADTS(std::vector<uint8_t>* buffer) const;
++  bool ConvertEsdsToADTS(std::vector<uint8_t>* buffer,
++                         int* adts_header_size) const;
+ 
+   // If known, returns the AudioCodecProfile.
+   AudioCodecProfile GetProfile() const;
+diff --git a/media/formats/mp4/aac_unittest.cc b/media/formats/mp4/aac_unittest.cc
+index ce0ebc21e9e3a03bb35ea6659da5252eee9722fc..e3811af29b8d30a93d2fb49eae25a4b6a231252a 100644
+--- a/media/formats/mp4/aac_unittest.cc
++++ b/media/formats/mp4/aac_unittest.cc
+@@ -258,7 +258,9 @@ TEST_F(AACTest, XHE_AAC) {
+ 
+   // ADTS conversion should do nothing since xHE-AAC can't be represented with
+   // only two bits for the profile.
+-  EXPECT_TRUE(aac_.ConvertEsdsToADTS(&data));
++  int adts_header_size = 1;  // Choose a non-zero value to make sure it's set.
++  EXPECT_TRUE(aac_.ConvertEsdsToADTS(&data, &adts_header_size));
++  EXPECT_EQ(adts_header_size, 0);
+   EXPECT_EQ(data.size(), sizeof(buffer));
+ }
+ 
+diff --git a/media/formats/mp4/mp4_stream_parser.cc b/media/formats/mp4/mp4_stream_parser.cc
+index e8ad908ee30ef8b9a1e4484ff6207241f1c590ea..3406bd0efda2f1c3a2e59f3d83edfbdd2af29fff 100644
+--- a/media/formats/mp4/mp4_stream_parser.cc
++++ b/media/formats/mp4/mp4_stream_parser.cc
+@@ -691,15 +691,16 @@ bool MP4StreamParser::PrepareAACBuffer(
+     std::vector<uint8_t>* frame_buf,
+     std::vector<SubsampleEntry>* subsamples) const {
+   // Append an ADTS header to every audio sample.
+-  RCHECK(aac_config.ConvertEsdsToADTS(frame_buf));
++  int adts_header_size = 0;
++  RCHECK(aac_config.ConvertEsdsToADTS(frame_buf, &adts_header_size));
+ 
+   // As above, adjust subsample information to account for the headers. AAC is
+   // not required to use subsample encryption, so we may need to add an entry.
+   if (subsamples->empty()) {
+-    subsamples->push_back(SubsampleEntry(
+-        kADTSHeaderMinSize, frame_buf->size() - kADTSHeaderMinSize));
++    subsamples->push_back(
++        SubsampleEntry(adts_header_size, frame_buf->size() - adts_header_size));
+   } else {
+-    (*subsamples)[0].clear_bytes += kADTSHeaderMinSize;
++    (*subsamples)[0].clear_bytes += adts_header_size;
+   }
+   return true;
+ }
+diff --git a/media/gpu/windows/mf_audio_encoder.cc b/media/gpu/windows/mf_audio_encoder.cc
+index 049cef50193bc8ea1ba500012cfb2d3718187b79..1a2985e46a1eb25961d8de024d81d59d466476e5 100644
+--- a/media/gpu/windows/mf_audio_encoder.cc
++++ b/media/gpu/windows/mf_audio_encoder.cc
+@@ -159,6 +159,7 @@ HRESULT CreateInputMediaType(const int sample_rate,
+ HRESULT CreateOutputMediaType(const int sample_rate,
+                               const int channels,
+                               const int bitrate,
++                              media::AudioEncoder::AacOutputFormat format,
+                               ComPtr<IMFMediaType>* output_media_type) {
+   // https://docs.microsoft.com/en-us/windows/win32/medfound/aac-encoder#output-types
+   ComPtr<IMFMediaType> media_type;
+@@ -179,10 +180,19 @@ HRESULT CreateOutputMediaType(const int sample_rate,
+ 
+   // On Win8+, the encoder can produce ADTS headers for us if we set the payload
+   // type to 1. On Win7, only raw AAC frames are produced.
+-  if (base::win::GetVersion() >= base::win::Version::WIN8)
+-    RETURN_IF_FAILED(media_type->SetUINT32(MF_MT_AAC_PAYLOAD_TYPE, 1));
+-  else
++  if (base::win::GetVersion() >= base::win::Version::WIN8) {
++    // Set payload format.
++    // https://learn.microsoft.com/en-us/windows/win32/medfound/mf-mt-aac-payload-type
++    // 0 - The stream contains raw_data_block elements only. (default)
++    // 1 - Audio Data Transport Stream (ADTS).
++    //     The stream contains an adts_sequence, as defined by MPEG-2.
++    if (format == media::AudioEncoder::AacOutputFormat::ADTS &&
++        base::win::GetVersion() >= base::win::Version::WIN8) {
++      RETURN_IF_FAILED(media_type->SetUINT32(MF_MT_AAC_PAYLOAD_TYPE, 1));
++    }
++  } else {
+     RETURN_IF_FAILED(media_type->SetUINT32(MF_MT_AAC_PAYLOAD_TYPE, 0));
++  }
+ 
+   *output_media_type = std::move(media_type);
+   return S_OK;
+@@ -436,9 +446,10 @@ void MFAudioEncoder::Initialize(const Options& options,
+     return;
+   }
+ 
++  auto format = options_.aac.value_or(AacOptions()).format;
+   ComPtr<IMFMediaType> output_media_type;
+   hr = CreateOutputMediaType(options_.sample_rate, options_.channels, bitrate,
+-                             &output_media_type);
++                             format, &output_media_type);
+   if (FAILED(hr) || !output_media_type) {
+     std::move(done_cb).Run(EncoderStatus::Codes::kEncoderInitializationError);
+     return;
+@@ -464,6 +475,33 @@ void MFAudioEncoder::Initialize(const Options& options,
+   hr =
+       GetOutputBufferRequirements(mf_encoder_, output_media_type,
+                                   options_.channels, &output_buffer_alignment_);
++
++  /*
++    https://learn.microsoft.com/en-us/windows/win32/medfound/aac-encoder
++
++    After the output type is set, the AAC encoder updates the type by adding
++    the MF_MT_USER_DATA attribute. This attribute contains the portion of
++    the HEAACWAVEINFO structure that appears after the WAVEFORMATEX structure
++    (that is, after the wfx member).
++    This is followed by the AudioSpecificConfig() data,
++    as defined by ISO/IEC 14496-3.
++  */
++  UINT32 desc_size = 0;
++  if (output_media_type->GetBlobSize(MF_MT_USER_DATA, &desc_size) == S_OK &&
++      desc_size > 0 && format == media::AudioEncoder::AacOutputFormat::AAC) {
++    codec_desc_.resize(desc_size);
++    size_t aac_config_offset =
++        sizeof(HEAACWAVEINFO) - offsetof(HEAACWAVEINFO, wPayloadType);
++    hr = output_media_type->GetBlob(MF_MT_USER_DATA, codec_desc_.data(),
++                                    desc_size, nullptr);
++    if (FAILED(hr) || aac_config_offset > codec_desc_.size()) {
++      std::move(done_cb).Run(EncoderStatus::Codes::kEncoderInitializationError);
++      return;
++    }
++    codec_desc_.erase(codec_desc_.begin(),
++                      codec_desc_.begin() + aac_config_offset);
++  }
++
+   if (FAILED(hr)) {
+     std::move(done_cb).Run(EncoderStatus::Codes::kEncoderInitializationError);
+     return;
+@@ -735,7 +773,13 @@ void MFAudioEncoder::TryProcessOutput(FlushCB flush_cb) {
+       return;
+     }
+ 
+-    output_cb_.Run(std::move(encoded_audio), absl::nullopt);
++    absl::optional<CodecDescription> desc;
++    if (!codec_desc_.empty()) {
++      desc = codec_desc_;
++      codec_desc_.clear();
++    }
++
++    output_cb_.Run(std::move(encoded_audio), desc);
+     samples_in_encoder_ -= kSamplesPerFrame;
+     hr = mf_encoder_->GetOutputStatus(&status);
+   }
+diff --git a/media/gpu/windows/mf_audio_encoder.h b/media/gpu/windows/mf_audio_encoder.h
+index c257f31e3aebe2bb1a937e6efb41ece0cc669ca5..37f14a22c4bc95b02c834279a5ec8f5b54e97721 100644
+--- a/media/gpu/windows/mf_audio_encoder.h
++++ b/media/gpu/windows/mf_audio_encoder.h
+@@ -186,6 +186,7 @@ class MEDIA_GPU_EXPORT MFAudioEncoder : public AudioEncoder {
+   int input_buffer_alignment_;
+   int output_buffer_alignment_;
+   bool initialized_ = false;
++  std::vector<uint8_t> codec_desc_;
+ 
+   // We can't produce output until at least `kMinSamplesForOutput` have been
+   // provided. Until then, `output_cb_` will not be run.
+diff --git a/media/mojo/mojom/audio_encoder.mojom b/media/mojo/mojom/audio_encoder.mojom
+index 9283796873430e56158df171ec8005644c0ec6ef..3bd42d43d59659b9988c69b942a627ab75b9317f 100644
+--- a/media/mojo/mojom/audio_encoder.mojom
++++ b/media/mojo/mojom/audio_encoder.mojom
+@@ -8,6 +8,11 @@ import "media/mojo/mojom/media_types.mojom";
+ import "media/mojo/mojom/audio_parameters.mojom";
+ import "mojo/public/mojom/base/time.mojom";
+ 
++enum AacOutputFormat { kAAC, kADTS };
++struct AacAudioEncoderConfig {
++  AacOutputFormat format;
++};
++
+ // This defines a mojo transport format for media::AudioEncoderConfig.
+ // See media/base/audio_encoder.h for descriptions.
+ struct AudioEncoderConfig {
+@@ -23,6 +28,9 @@ struct AudioEncoderConfig {
+   // Target encoded bitrate - bits per second of playback
+   // 0 - if client has no bitrate preference.
+   uint32 bitrate;
++
++  // AAC specific parts of the config
++  AacAudioEncoderConfig aac;
+ };
+ 
+ // This defines a mojo transport format for media::EncodedAudioBuffer.
+diff --git a/media/mojo/mojom/audio_encoder_config_mojom_traits.cc b/media/mojo/mojom/audio_encoder_config_mojom_traits.cc
+index 263929e658bd4b2a73047f18531c5735fc91f526..529246ad4196ca9dac35c56fd715b0157101980d 100644
+--- a/media/mojo/mojom/audio_encoder_config_mojom_traits.cc
++++ b/media/mojo/mojom/audio_encoder_config_mojom_traits.cc
+@@ -11,6 +11,51 @@
+ 
+ namespace mojo {
+ 
++// static
++media::mojom::AacOutputFormat EnumTraits<media::mojom::AacOutputFormat,
++                                         media::AudioEncoder::AacOutputFormat>::
++    ToMojom(media::AudioEncoder::AacOutputFormat input) {
++  switch (input) {
++    case media::AudioEncoder::AacOutputFormat::ADTS:
++      return media::mojom::AacOutputFormat::kADTS;
++    case media::AudioEncoder::AacOutputFormat::AAC:
++      return media::mojom::AacOutputFormat::kAAC;
++  }
++  NOTREACHED();
++  return media::mojom::AacOutputFormat::kAAC;
++}
++
++// static
++bool EnumTraits<media::mojom::AacOutputFormat,
++                media::AudioEncoder::AacOutputFormat>::
++    FromMojom(media::mojom::AacOutputFormat format,
++              media::AudioEncoder::AacOutputFormat* output) {
++  switch (format) {
++    case media::mojom::AacOutputFormat::kADTS:
++      *output = media::AudioEncoder::AacOutputFormat::ADTS;
++      return true;
++    case media::mojom::AacOutputFormat::kAAC:
++      *output = media::AudioEncoder::AacOutputFormat::AAC;
++      return true;
++  }
++  NOTREACHED();
++  return false;
++}
++
++// static
++bool StructTraits<media::mojom::AacAudioEncoderConfigDataView,
++                  media::AudioEncoder::AacOptions>::
++    Read(media::mojom::AacAudioEncoderConfigDataView input,
++         media::AudioEncoder::AacOptions* output) {
++  media::AudioEncoder::AacOutputFormat format;
++  if (!input.ReadFormat(&format)) {
++    return false;
++  }
++
++  output->format = format;
++  return true;
++}
++
+ // static
+ bool StructTraits<media::mojom::AudioEncoderConfigDataView,
+                   media::AudioEncoderConfig>::
+@@ -33,6 +78,12 @@ bool StructTraits<media::mojom::AudioEncoderConfigDataView,
+     return false;
+   output->channels = input.channel_count();
+ 
++  media::AudioEncoder::AacOptions aac;
++  if (!input.ReadAac(&aac)) {
++    return false;
++  }
++  output->aac = aac;
++
+   return true;
+ }
+ 
+diff --git a/media/mojo/mojom/audio_encoder_config_mojom_traits.h b/media/mojo/mojom/audio_encoder_config_mojom_traits.h
+index d99908a15107b5c5e505ce491928f196120c91d7..b97f3915e6e31a6c5977e8715b8ccf4b70bd680e 100644
+--- a/media/mojo/mojom/audio_encoder_config_mojom_traits.h
++++ b/media/mojo/mojom/audio_encoder_config_mojom_traits.h
+@@ -12,6 +12,28 @@
+ 
+ namespace mojo {
+ 
++template <>
++struct EnumTraits<media::mojom::AacOutputFormat,
++                  media::AudioEncoder::AacOutputFormat> {
++  static media::mojom::AacOutputFormat ToMojom(
++      media::AudioEncoder::AacOutputFormat input);
++
++  static bool FromMojom(media::mojom::AacOutputFormat,
++                        media::AudioEncoder::AacOutputFormat* output);
++};
++
++template <>
++struct StructTraits<media::mojom::AacAudioEncoderConfigDataView,
++                    media::AudioEncoder::AacOptions> {
++  static media::AudioEncoder::AacOutputFormat format(
++      media::AudioEncoder::AacOptions& input) {
++    return input.format;
++  }
++
++  static bool Read(media::mojom::AacAudioEncoderConfigDataView input,
++                   media::AudioEncoder::AacOptions* output);
++};
++
+ template <>
+ struct StructTraits<media::mojom::AudioEncoderConfigDataView,
+                     media::AudioEncoderConfig> {
+@@ -31,6 +53,11 @@ struct StructTraits<media::mojom::AudioEncoderConfigDataView,
+     return input.bitrate.value_or(0);
+   }
+ 
++  static media::AudioEncoder::AacOptions aac(
++      const media::AudioEncoderConfig& input) {
++    return input.aac.value_or(media::AudioEncoder::AacOptions());
++  }
++
+   static bool Read(media::mojom::AudioEncoderConfigDataView input,
+                    media::AudioEncoderConfig* output);
+ };
+diff --git a/third_party/blink/renderer/bindings/generated_in_modules.gni b/third_party/blink/renderer/bindings/generated_in_modules.gni
+index 568a63a4695341e064cee8e1eaa82a5afb6b6648..fbc272ecfa9eb5775f14b1dd2e038f9434fb0e18 100644
+--- a/third_party/blink/renderer/bindings/generated_in_modules.gni
++++ b/third_party/blink/renderer/bindings/generated_in_modules.gni
+@@ -101,6 +101,8 @@ generated_callback_interface_sources_in_modules = [
+ ]
+ 
+ generated_dictionary_sources_in_modules = [
++  "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_aac_encoder_config.cc",
++  "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_aac_encoder_config.h",
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_ad_properties.cc",
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_ad_properties.h",
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_ad_request_config.cc",
+@@ -695,6 +697,8 @@ generated_dictionary_sources_in_modules = [
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_offline_audio_context_options.h",
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_open_file_picker_options.cc",
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_open_file_picker_options.h",
++  "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_opus_encoder_config.cc",
++  "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_opus_encoder_config.h",
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_oscillator_options.cc",
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_oscillator_options.h",
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_otp_credential_request_options.cc",
+@@ -1042,6 +1046,8 @@ generated_dictionary_sources_in_modules = [
+ ]
+ 
+ generated_enumeration_sources_in_modules = [
++  "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_aac_bitstream_format.cc",
++  "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_aac_bitstream_format.h",
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_ad_signals.cc",
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_ad_signals.h",
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_alpha_option.cc",
+@@ -1300,6 +1306,8 @@ generated_enumeration_sources_in_modules = [
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_notification_permission.h",
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_offscreen_rendering_context_type.cc",
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_offscreen_rendering_context_type.h",
++  "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_opus_bitstream_format.cc",
++  "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_opus_bitstream_format.h",
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_orientation_lock_type.cc",
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_orientation_lock_type.h",
+   "$root_gen_dir/third_party/blink/renderer/bindings/modules/v8/v8_orientation_type.cc",
+diff --git a/third_party/blink/renderer/bindings/idl_in_modules.gni b/third_party/blink/renderer/bindings/idl_in_modules.gni
+index 6b6f0c03863f5c7e4aba6b5a3270908b643aef01..8ca5cb3643228ee3701396ff930b386034d4f642 100644
+--- a/third_party/blink/renderer/bindings/idl_in_modules.gni
++++ b/third_party/blink/renderer/bindings/idl_in_modules.gni
+@@ -824,6 +824,7 @@ static_idl_files_in_modules = get_path_info(
+           "//third_party/blink/renderer/modules/webaudio/stereo_panner_options.idl",
+           "//third_party/blink/renderer/modules/webaudio/wave_shaper_node.idl",
+           "//third_party/blink/renderer/modules/webaudio/wave_shaper_options.idl",
++          "//third_party/blink/renderer/modules/webcodecs/aac_encoder_config.idl",
+           "//third_party/blink/renderer/modules/webcodecs/audio_data.idl",
+           "//third_party/blink/renderer/modules/webcodecs/audio_data_copy_to_options.idl",
+           "//third_party/blink/renderer/modules/webcodecs/audio_data_init.idl",
+@@ -855,6 +856,7 @@ static_idl_files_in_modules = get_path_info(
+           "//third_party/blink/renderer/modules/webcodecs/image_track.idl",
+           "//third_party/blink/renderer/modules/webcodecs/image_track_list.idl",
+           "//third_party/blink/renderer/modules/webcodecs/latency_mode.idl",
++          "//third_party/blink/renderer/modules/webcodecs/opus_encoder_config.idl",
+           "//third_party/blink/renderer/modules/webcodecs/plane_layout.idl",
+           "//third_party/blink/renderer/modules/webcodecs/svc_output_metadata.idl",
+           "//third_party/blink/renderer/modules/webcodecs/video_color_primaries.idl",
+diff --git a/third_party/blink/renderer/modules/webcodecs/aac_encoder_config.idl b/third_party/blink/renderer/modules/webcodecs/aac_encoder_config.idl
+new file mode 100644
+index 0000000000000000000000000000000000000000..bfdedad21b33764a07d785e82ea58be34c904526
+--- /dev/null
++++ b/third_party/blink/renderer/modules/webcodecs/aac_encoder_config.idl
+@@ -0,0 +1,16 @@
++// Copyright 2023 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++// https://github.com/w3c/web-codecs
++
++enum AacBitstreamFormat {
++  "aac",
++  "adts",
++};
++
++// NOTE: Keep this structure in sync with CopyAacConfig() defined in
++// audio_encoder.cc.
++dictionary AacEncoderConfig {
++  AacBitstreamFormat format = "aac";
++};
+\ No newline at end of file
+diff --git a/third_party/blink/renderer/modules/webcodecs/audio_encoder.cc b/third_party/blink/renderer/modules/webcodecs/audio_encoder.cc
+index 876bd56701537be952b8900fd004b66b598faf15..b82db0438157a3ed9b21ab6e45a4645f34195d3b 100644
+--- a/third_party/blink/renderer/modules/webcodecs/audio_encoder.cc
++++ b/third_party/blink/renderer/modules/webcodecs/audio_encoder.cc
+@@ -13,6 +13,7 @@
+ #include "base/numerics/safe_conversions.h"
+ #include "base/trace_event/common/trace_event_common.h"
+ #include "base/trace_event/trace_event.h"
++#include "build/build_config.h"
+ #include "media/audio/audio_opus_encoder.h"
+ #include "media/base/audio_parameters.h"
+ #include "media/base/limits.h"
+@@ -27,11 +28,13 @@
+ #include "third_party/blink/public/platform/platform.h"
+ #include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
+ #include "third_party/blink/renderer/bindings/core/v8/v8_typedefs.h"
++#include "third_party/blink/renderer/bindings/modules/v8/v8_aac_encoder_config.h"
+ #include "third_party/blink/renderer/bindings/modules/v8/v8_audio_data_init.h"
+ #include "third_party/blink/renderer/bindings/modules/v8/v8_audio_decoder_config.h"
+ #include "third_party/blink/renderer/bindings/modules/v8/v8_audio_encoder_config.h"
+ #include "third_party/blink/renderer/bindings/modules/v8/v8_audio_encoder_support.h"
+ #include "third_party/blink/renderer/bindings/modules/v8/v8_encoded_audio_chunk_metadata.h"
++#include "third_party/blink/renderer/bindings/modules/v8/v8_opus_encoder_config.h"
+ #include "third_party/blink/renderer/modules/webaudio/audio_buffer.h"
+ #include "third_party/blink/renderer/modules/webcodecs/allow_shared_buffer_source_util.h"
+ #include "third_party/blink/renderer/modules/webcodecs/encoded_audio_chunk.h"
+@@ -46,6 +49,125 @@ namespace {
+ 
+ constexpr const char kCategory[] = "media";
+ 
++#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS) || defined(ARCH_CPU_ARM_FAMILY)
++constexpr uint32_t kDefaultOpusComplexity = 5;
++#else
++constexpr uint32_t kDefaultOpusComplexity = 9;
++#endif
++
++template <typename T>
++bool VerifyParameterValues(const T& value,
++                           ExceptionState* exception_state,
++                           WTF::String error_message,
++                           WTF::Vector<T> supported_values) {
++  if (base::Contains(supported_values, value))
++    return true;
++
++  if (exception_state) {
++    WTF::StringBuilder error_builder;
++    error_builder.Append(error_message);
++    error_builder.Append(" Supported values: ");
++    for (auto i = 0u; i < supported_values.size(); i++) {
++      if (i != 0)
++        error_builder.Append(", ");
++      error_builder.AppendNumber(supported_values[i]);
++    }
++    exception_state->ThrowDOMException(DOMExceptionCode::kNotSupportedError,
++                                       error_builder.ToString());
++  }
++  return false;
++}
++
++AudioEncoderTraits::ParsedConfig* ParseAacConfigStatic(
++    const AacEncoderConfig* aac_config,
++    AudioEncoderTraits::ParsedConfig* result,
++    ExceptionState& exception_state) {
++  result->options.aac = media::AudioEncoder::AacOptions();
++  switch (aac_config->format().AsEnum()) {
++    case V8AacBitstreamFormat::Enum::kAac:
++      result->options.aac->format = media::AudioEncoder::AacOutputFormat::AAC;
++      return result;
++    case V8AacBitstreamFormat::Enum::kAdts:
++      result->options.aac->format = media::AudioEncoder::AacOutputFormat::ADTS;
++      return result;
++  }
++  return result;
++}
++
++AudioEncoderTraits::ParsedConfig* ParseOpusConfigStatic(
++    const OpusEncoderConfig* opus_config,
++    AudioEncoderTraits::ParsedConfig* result,
++    ExceptionState& exception_state) {
++  constexpr uint32_t kComplexityUpperBound = 10;
++  uint32_t complexity = opus_config->getComplexityOr(kDefaultOpusComplexity);
++  if (complexity > kComplexityUpperBound) {
++    exception_state.ThrowTypeError(
++        ExceptionMessages::IndexExceedsMaximumBound<uint32_t>(
++            "Opus complexity", complexity, kComplexityUpperBound));
++    return nullptr;
++  }
++
++  constexpr uint32_t kPacketLossPercUpperBound = 100;
++  uint32_t packet_loss_perc = opus_config->packetlossperc();
++  if (packet_loss_perc > kPacketLossPercUpperBound) {
++    exception_state.ThrowTypeError(
++        ExceptionMessages::IndexExceedsMaximumBound<uint32_t>(
++            "Opus packetlossperc", packet_loss_perc,
++            kPacketLossPercUpperBound));
++    return nullptr;
++  }
++
++  // `frame_duration` must be a valid frame duration, defined in section 2.1.4.
++  // of RFC6716.
++  constexpr base::TimeDelta kFrameDurationLowerBound = base::Microseconds(2500);
++  constexpr base::TimeDelta kFrameDurationUpperBound = base::Milliseconds(120);
++  uint64_t frame_duration = opus_config->frameDuration();
++  if (frame_duration < kFrameDurationLowerBound.InMicroseconds() ||
++      frame_duration > kFrameDurationUpperBound.InMicroseconds()) {
++    exception_state.ThrowTypeError(
++        ExceptionMessages::IndexOutsideRange<uint64_t>(
++            "Opus frameDuration", frame_duration,
++            kFrameDurationLowerBound.InMicroseconds(),
++            ExceptionMessages::BoundType::kInclusiveBound,
++            kFrameDurationUpperBound.InMicroseconds(),
++            ExceptionMessages::BoundType::kInclusiveBound));
++    return nullptr;
++  }
++
++  // Any multiple of a frame duration is allowed by RFC6716. Concretely, this
++  // means any multiple of 2500 microseconds.
++  if (frame_duration % kFrameDurationLowerBound.InMicroseconds() != 0) {
++    exception_state.ThrowTypeError(String::Format(
++        "Invalid Opus frameDuration; expected a multiple of %" PRIu64
++        ", received %" PRIu64 ".",
++        kFrameDurationLowerBound.InMicroseconds(), frame_duration));
++    return nullptr;
++  }
++
++  // TODO(crbug.com/1378399): Support all multiples of basic frame durations.
++  if (!VerifyParameterValues(frame_duration, &exception_state,
++                             "Unsupported Opus frameDuration.",
++                             {2500, 5000, 10000, 20000, 40000, 60000})) {
++    return nullptr;
++  }
++
++  if (opus_config->format().AsEnum() == V8OpusBitstreamFormat::Enum::kOgg) {
++    exception_state.ThrowDOMException(DOMExceptionCode::kNotSupportedError,
++                                      "Opus Ogg format is unsupported");
++    return nullptr;
++  }
++
++  result->options.opus = {
++      .frame_duration = base::Microseconds(frame_duration),
++      .complexity = complexity,
++      .packet_loss_perc = packet_loss_perc,
++      .use_in_band_fec = opus_config->useinbandfec(),
++      .use_dtx = opus_config->usedtx(),
++  };
++
++  return result;
++}
++
+ AudioEncoderTraits::ParsedConfig* ParseConfigStatic(
+     const AudioEncoderConfig* config,
+     ExceptionState& exception_state) {
+@@ -95,30 +217,19 @@ AudioEncoderTraits::ParsedConfig* ParseConfigStatic(
+     result->options.bitrate = static_cast<int>(config->bitrate());
+   }
+ 
+-  return result;
+-}
+-
+-template <typename T>
+-bool VerifyParameterValues(const T& value,
+-                           ExceptionState* exception_state,
+-                           WTF::String error_message,
+-                           WTF::Vector<T> supported_values) {
+-  if (!base::Contains(supported_values, value)) {
+-    if (exception_state) {
+-      WTF::StringBuilder error_builder;
+-      error_builder.Append(error_message);
+-      error_builder.Append(" Supported values: ");
+-      for (auto i = 0u; i < supported_values.size(); i++) {
+-        if (i != 0)
+-          error_builder.Append(", ");
+-        error_builder.AppendNumber(supported_values[i]);
+-      }
+-      exception_state->ThrowDOMException(DOMExceptionCode::kNotSupportedError,
+-                                         error_builder.ToString());
++  switch (result->options.codec) {
++    case media::AudioCodec::kOpus:
++      return ParseOpusConfigStatic(
++          config->hasOpus() ? config->opus() : OpusEncoderConfig::Create(),
++          result, exception_state);
++    case media::AudioCodec::kAAC: {
++      auto* aac_config =
++          config->hasAac() ? config->aac() : AacEncoderConfig::Create();
++      return ParseAacConfigStatic(aac_config, result, exception_state);
+     }
+-    return false;
++    default:
++      return result;
+   }
+-  return true;
+ }
+ 
+ bool VerifyCodecSupportStatic(AudioEncoderTraits::ParsedConfig* config,
+@@ -184,6 +295,23 @@ bool VerifyCodecSupportStatic(AudioEncoderTraits::ParsedConfig* config,
+   }
+ }
+ 
++AacEncoderConfig* CopyAacConfig(const AacEncoderConfig& config) {
++  auto* result = AacEncoderConfig::Create();
++  result->setFormat(config.format());
++  return result;
++}
++
++OpusEncoderConfig* CopyOpusConfig(const OpusEncoderConfig& config) {
++  auto* opus_result = OpusEncoderConfig::Create();
++  opus_result->setFormat(config.format());
++  opus_result->setFrameDuration(config.frameDuration());
++  opus_result->setComplexity(config.getComplexityOr(kDefaultOpusComplexity));
++  opus_result->setPacketlossperc(config.packetlossperc());
++  opus_result->setUseinbandfec(config.useinbandfec());
++  opus_result->setUsedtx(config.usedtx());
++  return opus_result;
++}
++
+ AudioEncoderConfig* CopyConfig(const AudioEncoderConfig& config) {
+   auto* result = AudioEncoderConfig::Create();
+   result->setCodec(config.codec());
+@@ -191,6 +319,14 @@ AudioEncoderConfig* CopyConfig(const AudioEncoderConfig& config) {
+   result->setNumberOfChannels(config.numberOfChannels());
+   if (config.hasBitrate())
+     result->setBitrate(config.bitrate());
++
++  if (config.codec() == String("opus") && config.hasOpus())
++    result->setOpus(CopyOpusConfig(*config.opus()));
++
++  if (config.codec() == String("aac") && config.hasAac()) {
++    result->setAac(CopyAacConfig(*config.aac()));
++  }
++
+   return result;
+ }
+ 
+diff --git a/third_party/blink/renderer/modules/webcodecs/audio_encoder_config.idl b/third_party/blink/renderer/modules/webcodecs/audio_encoder_config.idl
+index 72ef7e6c5a6c457702b941d69015e82fe050985f..4c675334b7e79bb5eabb5e1aaccaeed5ecae7fc6 100644
+--- a/third_party/blink/renderer/modules/webcodecs/audio_encoder_config.idl
++++ b/third_party/blink/renderer/modules/webcodecs/audio_encoder_config.idl
+@@ -2,7 +2,7 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+-// https://github.com/WICG/web-codecs
++// https://github.com/w3c/web-codecs
+ 
+ // NOTE: Keep this structure in sync with CopyConfig() defined in
+ // audio_encoder.cc.
+@@ -16,4 +16,8 @@ dictionary AudioEncoderConfig {
+   required [EnforceRange] unsigned short numberOfChannels;
+ 
+   [EnforceRange] unsigned long long bitrate;
++
++  // Codec-specific extensions
++  AacEncoderConfig aac;
++  OpusEncoderConfig opus;
+ };
+diff --git a/third_party/blink/renderer/modules/webcodecs/opus_encoder_config.idl b/third_party/blink/renderer/modules/webcodecs/opus_encoder_config.idl
+new file mode 100644
+index 0000000000000000000000000000000000000000..fef6216fc78ebaa48c23c1952161a63c208fdedf
+--- /dev/null
++++ b/third_party/blink/renderer/modules/webcodecs/opus_encoder_config.idl
+@@ -0,0 +1,21 @@
++// Copyright 2022 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++// https://github.com/w3c/web-codecs
++
++enum OpusBitstreamFormat {
++  "opus",
++  "ogg",
++};
++
++// NOTE: Keep this structure in sync with CopyOpusConfig() defined in
++// audio_encoder.cc.
++dictionary OpusEncoderConfig {
++  OpusBitstreamFormat format = "opus";
++  [EnforceRange] unsigned long long frameDuration = 20000;
++  [EnforceRange] unsigned long complexity;
++  [EnforceRange] unsigned long packetlossperc = 0;
++  boolean useinbandfec = false;
++  boolean usedtx = false;
++};
+\ No newline at end of file
+diff --git a/third_party/blink/web_tests/external/wpt/webcodecs/audio-encoder-config.https.any.js b/third_party/blink/web_tests/external/wpt/webcodecs/audio-encoder-config.https.any.js
+index a847473fbb52ca1d8307c83d1032b12e76f444d1..f36c4215e85e02165fa6b384f9b83c993c6836c7 100644
+--- a/third_party/blink/web_tests/external/wpt/webcodecs/audio-encoder-config.https.any.js
++++ b/third_party/blink/web_tests/external/wpt/webcodecs/audio-encoder-config.https.any.js
+@@ -4,11 +4,11 @@
+ const invalidConfigs = [
+   {
+     comment: 'Emtpy codec',
+-    config: { codec: '' },
++    config: {codec: ''},
+   },
+   {
+     comment: 'Unrecognized codec',
+-    config: { codec: 'bogus' },
++    config: {codec: 'bogus'},
+   },
+   {
+     comment: 'Sample rate is too small',
+@@ -45,13 +45,68 @@ const invalidConfigs = [
+   },
+   {
+     comment: 'Bit rate too big',
+-    config: {
++    config:{
+       codec: 'opus',
+       sampleRate: 8000,
+       numberOfChannels: 2,
+       bitrate: 6e9
+     },
+   },
++  {
++    comment: 'Opus complexity too big',
++    config: {
++      codec: 'opus',
++      sampleRate: 8000,
++      numberOfChannels: 2,
++      opus: {
++        complexity: 11,
++      },
++    },
++  },
++  {
++    comment: 'Opus packetlossperc too big',
++    config: {
++      codec: 'opus',
++      sampleRate: 8000,
++      numberOfChannels: 2,
++      opus: {
++        packetlossperc: 101,
++      },
++    },
++  },
++  {
++    comment: 'Opus frame duration too small',
++    config: {
++      codec: 'opus',
++      sampleRate: 8000,
++      numberOfChannels: 2,
++      opus: {
++        frameDuration: 0,
++      },
++    },
++  },
++  {
++    comment: 'Opus frame duration too big',
++    config: {
++      codec: 'opus',
++      sampleRate: 8000,
++      numberOfChannels: 2,
++      opus: {
++        frameDuration: 122500,
++      },
++    },
++  },
++  {
++    comment: 'Invalid Opus frameDuration',
++    config: {
++      codec: 'opus',
++      sampleRate: 8000,
++      numberOfChannels: 2,
++      opus: {
++        frameDuration: 2501,
++      },
++    },
++  },
+ ];
+ 
+ invalidConfigs.forEach(entry => {
+@@ -111,6 +166,36 @@ const validConfigs = [
+     bitrate: 128000,
+     bogus: 123
+   },
++  {
++    codec: 'opus',
++    sampleRate: 48000,
++    numberOfChannels: 2,
++    opus: {
++      complexity: 5,
++      frameDuration: 20000,
++      packetlossperc: 10,
++      useinbandfec: true,
++    },
++  },
++  {
++    codec: 'opus',
++    sampleRate: 48000,
++    numberOfChannels: 2,
++    opus: {
++      format: 'opus',
++      complexity: 10,
++      frameDuration: 60000,
++      packetlossperc: 20,  // Irrelevant without useinbandfec, but still valid.
++      usedtx: true,
++      bogus: 456,
++    },
++  },
++  {
++    codec: 'opus',
++    sampleRate: 48000,
++    numberOfChannels: 2,
++    opus: {},  // Use default values.
++  },
+ ];
+ 
+ validConfigs.forEach(config => {
+@@ -124,6 +209,33 @@ validConfigs.forEach(config => {
+     assert_equals(new_config.numberOfChannels, config.numberOfChannels);
+     if (config.bitrate)
+       assert_equals(new_config.bitrate, config.bitrate);
++
++    if (config.opus) {
++      let opus_config = config.opus;
++      let new_opus_config = new_config.opus;
++
++      assert_equals(new_opus_config.format, opus_config.format ?? 'opus');
++      assert_equals(
++          new_opus_config.frameDuration, opus_config.frameDuration ?? 20000);
++      assert_equals(
++          new_opus_config.packetlossperc, opus_config.packetlossperc ?? 0);
++      assert_equals(
++          new_opus_config.useinbandfec, opus_config.useinbandfec ?? false);
++      assert_equals(new_opus_config.usedtx, opus_config.usedtx ?? false);
++      assert_false(new_opus_config.hasOwnProperty('bogus'));
++
++      if (opus_config.complexity) {
++        assert_equals(new_opus_config.complexity, opus_config.complexity);
++      } else {
++        // Default complexity is 5 for mobile/ARM platforms, and 9 otherwise.
++        assert_true(
++            new_opus_config.complexity == 5 || new_opus_config.complexity == 9);
++      }
++
++    } else {
++      assert_false(new_config.hasOwnProperty('opus'));
++    }
++
+     assert_false(new_config.hasOwnProperty('bogus'));
+   }, "AudioEncoder.isConfigSupported() supports:" + JSON.stringify(config));
+ });
+diff --git a/third_party/blink/web_tests/external/wpt/webcodecs/audio-encoder.https.any.js b/third_party/blink/web_tests/external/wpt/webcodecs/audio-encoder.https.any.js
+index d1ae55435a68f7fa744954eaf9a5776f04c6e4dd..e84766eff1db8ff9b624327574ed473284f4e805 100644
+--- a/third_party/blink/web_tests/external/wpt/webcodecs/audio-encoder.https.any.js
++++ b/third_party/blink/web_tests/external/wpt/webcodecs/audio-encoder.https.any.js
+@@ -472,3 +472,101 @@ promise_test(async t => {
+   encoder.reset();
+   assert_equals(encoder.encodeQueueSize, 0);
+ }, 'encodeQueueSize test');
++
++const testOpusEncoderConfigs = [
++  {
++    comment: 'Empty Opus config',
++    opus: {},
++  },
++  {
++    comment: 'Opus with frameDuration',
++    opus: {frameDuration: 2500},
++  },
++  {
++    comment: 'Opus with complexity',
++    opus: {complexity: 10},
++  },
++  {
++    comment: 'Opus with useinbandfec',
++    opus: {
++      packetlossperc: 15,
++      useinbandfec: true,
++    },
++  },
++  {
++    comment: 'Opus with usedtx',
++    opus: {usedtx: true},
++  },
++  {
++    comment: 'Opus mixed parameters',
++    opus: {
++      frameDuration: 40000,
++      complexity: 0,
++      packetlossperc: 10,
++      useinbandfec: true,
++      usedtx: true,
++    },
++  }
++  ];
++
++  testOpusEncoderConfigs.forEach(entry => {
++  promise_test(async t => {
++    let sample_rate = 48000;
++    let total_duration_s = 0.5;
++    let data_count = 10;
++    let outputs = [];
++    let init = {
++      error: e => {
++        assert_unreached('error: ' + e);
++      },
++      output: chunk => {
++        outputs.push(chunk);
++      }
++    };
++
++    let encoder = new AudioEncoder(init);
++
++    assert_equals(encoder.state, 'unconfigured');
++    let config = {
++      codec: 'opus',
++      sampleRate: sample_rate,
++      numberOfChannels: 2,
++      bitrate: 256000,  // 256kbit
++      opus: entry.opus,
++    };
++
++    encoder.configure(config);
++
++    let timestamp_us = 0;
++    let data_duration_s = total_duration_s / data_count;
++    let data_length = data_duration_s * config.sampleRate;
++    for (let i = 0; i < data_count; i++) {
++      let data = make_audio_data(
++          timestamp_us, config.numberOfChannels, config.sampleRate,
++          data_length);
++      encoder.encode(data);
++      data.close();
++      timestamp_us += data_duration_s * 1_000_000;
++    }
++
++    // Encoders might output an extra buffer of silent padding.
++    let padding_us = data_duration_s * 1_000_000;
++
++    await encoder.flush();
++    encoder.close();
++    assert_greater_than_equal(outputs.length, data_count);
++    assert_equals(outputs[0].timestamp, 0, 'first chunk timestamp');
++    let total_encoded_duration = 0
++    for (chunk of outputs) {
++      assert_greater_than(chunk.byteLength, 0, 'chunk byteLength');
++      assert_greater_than_equal(
++          timestamp_us + padding_us, chunk.timestamp, 'chunk timestamp');
++      assert_greater_than(chunk.duration, 0, 'chunk duration');
++      total_encoded_duration += chunk.duration;
++    }
++
++    // The total duration might be padded with silence.
++    assert_greater_than_equal(
++        total_encoded_duration, total_duration_s * 1_000_000);
++  }, 'Test encoding Opus with additional parameters: ' + entry.comment);
++})
