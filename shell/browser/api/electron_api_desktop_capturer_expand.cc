@@ -37,15 +37,27 @@ DesktopCapturerExpand::DesktopCapturerExpand(v8::Isolate* isolate) {}
 DesktopCapturerExpand::~DesktopCapturerExpand() = default;
 
 void DesktopCapturerExpand::StartObserving() {
+  if (is_started_) {
+    return;
+  }
+
   NativeDesktopMediaFrameBoundIndicator* media_frame_bound_indicator =
       NativeDesktopMediaFrameBoundIndicator::GetInstance();
   media_frame_bound_indicator->StartObserving(this);
+
+  is_started_ = true;
 }
 
 void DesktopCapturerExpand::StopObserving() {
+  if (!is_started_) {
+    return;
+  }
+
   NativeDesktopMediaFrameBoundIndicator* media_frame_bound_indicator =
       NativeDesktopMediaFrameBoundIndicator::GetInstance();
   media_frame_bound_indicator->StopObserving();
+
+  is_started_ = false;
 }
 
 void DesktopCapturerExpand::OnMediaFrameBoundChanged(const gfx::Rect& bound) {

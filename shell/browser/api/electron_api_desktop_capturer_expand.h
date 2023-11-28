@@ -42,7 +42,9 @@ class DesktopCapturerExpand
   void StartObserving();
   void StopObserving();
 
-  bool shared_window_minimized_;
+  bool shared_window_minimized_ = false;
+
+  bool is_started_ = false;
 };
 
 }  // namespace api
