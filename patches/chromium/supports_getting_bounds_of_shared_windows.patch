@@ -1,0 +1,187 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Fri, 8 Dec 2023 15:28:07 +0800
+Subject: Supports getting bounds of shared windows
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+支持获取共享窗口的大小和坐标
+
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 48799f517e4b83f157c86e9b579cd98007fa47d7..c60c15a1315b95db0551c4b1cc0e1de7060de78c 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -779,6 +779,8 @@ static_library("browser") {
+     "media/webrtc/media_stream_device_permissions.h",
+     "media/webrtc/native_desktop_media_list.cc",
+     "media/webrtc/native_desktop_media_list.h",
++    "media/webrtc/native_desktop_media_frame_bound_indicator.cc",
++    "media/webrtc/native_desktop_media_frame_bound_indicator.h",
+     "media/webrtc/permission_bubble_media_access_handler.cc",
+     "media/webrtc/permission_bubble_media_access_handler.h",
+     "media/webrtc/same_origin_observer.cc",
+diff --git a/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.cc b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..e39077be7bb75bdca4dacec160ee5f4e707ae4cc
+--- /dev/null
++++ b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.cc
+@@ -0,0 +1,36 @@
++#include "chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h"
++#include "base/logging.h"
++
++NativeDesktopMediaFrameBoundIndicator* NativeDesktopMediaFrameBoundIndicator::GetInstance() {
++  return base::Singleton<NativeDesktopMediaFrameBoundIndicator>::get();
++}
++
++NativeDesktopMediaFrameBoundIndicator::NativeDesktopMediaFrameBoundIndicator() = default;
++
++NativeDesktopMediaFrameBoundIndicator::~NativeDesktopMediaFrameBoundIndicator() = default;
++
++void NativeDesktopMediaFrameBoundIndicator::StartObserving(NativeDesktopMediaFrameBoundObserver* observer) {
++  observer_ = observer;
++}
++
++void NativeDesktopMediaFrameBoundIndicator::StopObserving() {
++  observer_ = nullptr;
++}
++
++void NativeDesktopMediaFrameBoundIndicator::OnMediaFrameBoundChanged(const gfx::Rect& bound) {
++  // LOG(ERROR) << "sll-----NativeDesktopMediaFrameBoundIndicator::OnMediaFrameBoundChanged:: "
++  // << "x = " << bound.x()
++  // << ", y = " << bound.y()
++  // << ", width = " << bound.width()
++  // << ", height = " << bound.height();
++
++  if (observer_ != nullptr) {
++    observer_->OnMediaFrameBoundChanged(bound);
++  }
++}
++
++void NativeDesktopMediaFrameBoundIndicator::OnSharedWindowMinimizedStateChanged(const bool minimized) {
++  if (observer_ != nullptr) {
++    observer_->OnSharedWindowMinimizedStateChanged(minimized);
++  }
++}
+\ No newline at end of file
+diff --git a/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..ee0db496c3f76ded9a37732d91849ad1603462b2
+--- /dev/null
++++ b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h
+@@ -0,0 +1,36 @@
++#ifndef CHROME_BROWSER_MEDIA_WEBRTC_NATIVE_DESKTOP_MEDIA_FRAME_BOUND_INDICATOR_H_
++#define CHROME_BROWSER_MEDIA_WEBRTC_NATIVE_DESKTOP_MEDIA_FRAME_BOUND_INDICATOR_H_
++
++#include "base/memory/singleton.h"
++#include "ui/gfx/geometry/rect.h"
++
++class NativeDesktopMediaFrameBoundObserver {
++ public:
++  virtual void OnMediaFrameBoundChanged(const gfx::Rect& bound) = 0;
++  virtual void OnSharedWindowMinimizedStateChanged(const bool minimized) = 0;
++
++ protected:
++  virtual ~NativeDesktopMediaFrameBoundObserver() {}
++};
++
++class NativeDesktopMediaFrameBoundIndicator {
++ public:
++  static NativeDesktopMediaFrameBoundIndicator* GetInstance();
++
++  void StartObserving(NativeDesktopMediaFrameBoundObserver* observer);
++
++  void StopObserving();
++
++  void OnMediaFrameBoundChanged(const gfx::Rect& bound);
++  void OnSharedWindowMinimizedStateChanged(const bool minimized);
++
++ private:
++  friend struct base::DefaultSingletonTraits<NativeDesktopMediaFrameBoundIndicator>;
++
++  NativeDesktopMediaFrameBoundIndicator();
++  virtual ~NativeDesktopMediaFrameBoundIndicator();
++
++  raw_ptr<NativeDesktopMediaFrameBoundObserver> observer_ = nullptr;
++};
++
++#endif  // CHROME_BROWSER_MEDIA_WEBRTC_NATIVE_DESKTOP_MEDIA_FRAME_BOUND_INDICATOR_H_
+diff --git a/content/browser/media/capture/desktop_capture_device.cc b/content/browser/media/capture/desktop_capture_device.cc
+index db228ce4864d91d7fd97f458e2c0193d5de9ab47..aa8415f807b9a107e65a422b2c16829b1d0655b3 100644
+--- a/content/browser/media/capture/desktop_capture_device.cc
++++ b/content/browser/media/capture/desktop_capture_device.cc
+@@ -54,6 +54,7 @@
+ #include "third_party/webrtc/modules/desktop_capture/fake_desktop_capturer.h"
+ #include "third_party/webrtc/modules/desktop_capture/mouse_cursor_monitor.h"
+ #include "ui/gfx/icc_profile.h"
++#include "chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h"
+ 
+ #if BUILDFLAG(IS_CHROMEOS_LACROS)
+ #include "content/browser/media/capture/desktop_capturer_lacros.h"
+@@ -88,6 +89,13 @@ bool IsFrameUnpackedOrInverted(webrtc::DesktopFrame* frame) {
+       frame->size().width() * webrtc::DesktopFrame::kBytesPerPixel;
+ }
+ 
++void OnMediaFrameBoundChanged(const gfx::Rect& bound) {
++  DCHECK_CURRENTLY_ON(BrowserThread::UI);
++  NativeDesktopMediaFrameBoundIndicator* media_frame_bound_indicator =
++    NativeDesktopMediaFrameBoundIndicator::GetInstance();
++  media_frame_bound_indicator->OnMediaFrameBoundChanged(bound);
++}
++
+ void BindWakeLockProvider(
+     mojo::PendingReceiver<device::mojom::WakeLockProvider> receiver) {
+   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+@@ -481,6 +489,15 @@ void DesktopCaptureDevice::Core::OnCaptureResult(
+                        FROM_HERE, "The desktop capturer has failed.");
+       return;
+     }
++
++    //处理捕获的帧出错的情况
++    if ((capturer_type_ == DesktopMediaID::TYPE_WINDOW)
++      && (BrowserThread::IsThreadInitialized(BrowserThread::UI))) {
++      gfx::Rect bound = gfx::Rect(0, 0, 0, 0);
++      GetUIThreadTaskRunner({})->PostTask(
++          FROM_HERE, base::BindOnce(&OnMediaFrameBoundChanged, bound));
++    }
++
+     // Continue capturing frames in the temporary error case.
+     ScheduleNextCaptureFrame();
+     return;
+@@ -547,6 +564,18 @@ void DesktopCaptureDevice::Core::OnCaptureResult(
+       output_frame_->SetFrameDataToBlack();
+       output_frame_is_black_ = true;
+     }
++
++    //处理捕获窗口最小化
++    if ((capturer_type_ == DesktopMediaID::TYPE_WINDOW)
++      && (BrowserThread::IsThreadInitialized(BrowserThread::UI))) {
++      const webrtc::DesktopRect original_window_rect = frame->original_window_rect();
++      gfx::Rect bound = gfx::Rect(original_window_rect.left(),
++                                  original_window_rect.top(),
++                                  original_window_rect.width(),
++                                  original_window_rect.height());
++      GetUIThreadTaskRunner({})->PostTask(
++          FROM_HERE, base::BindOnce(&OnMediaFrameBoundChanged, bound));
++    }
+   } else {
+     // Scaling frame with odd dimensions to even dimensions will cause
+     // blurring. See https://crbug.com/737278.
+@@ -565,6 +594,17 @@ void DesktopCaptureDevice::Core::OnCaptureResult(
+     DCHECK(frame);
+     DCHECK(!frame->size().is_empty());
+ 
++    if ((capturer_type_ == DesktopMediaID::TYPE_WINDOW)
++      && (BrowserThread::IsThreadInitialized(BrowserThread::UI))) {
++      webrtc::DesktopRect original_window_rect = frame->original_window_rect();
++      gfx::Rect bounds = gfx::Rect(original_window_rect.left(),
++                                  original_window_rect.top(),
++                                  original_window_rect.width(),
++                                  original_window_rect.height());
++      GetUIThreadTaskRunner({})->PostTask(
++          FROM_HERE, base::BindOnce(&OnMediaFrameBoundChanged, bounds));
++    }
++
+     if (!frame->size().equals(output_size)) {
+       VLOG(2) << "  Downscaling: frame->size=(" << frame->size().width() << "x"
+               << frame->size().height() << ")";

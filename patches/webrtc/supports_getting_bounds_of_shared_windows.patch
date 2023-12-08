@@ -1,0 +1,153 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Fri, 8 Dec 2023 15:31:24 +0800
+Subject: Supports getting bounds of shared windows
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+支持获取共享窗口的大小和坐标
+
+diff --git a/modules/desktop_capture/cropping_window_capturer.cc b/modules/desktop_capture/cropping_window_capturer.cc
+index 5e0faaade946ce1977f8eb67753aed0f08e449d5..8a8bbed32f473932624e6b3623d3203eafc27e95 100644
+--- a/modules/desktop_capture/cropping_window_capturer.cc
++++ b/modules/desktop_capture/cropping_window_capturer.cc
+@@ -108,6 +108,9 @@ void CroppingWindowCapturer::OnCaptureResult(
+     return;
+   }
+ 
++  DesktopRect original_window_rect = GetOriginalWindowRect();
++  cropped_frame->set_original_window_rect(original_window_rect);
++
+   callback_->OnCaptureResult(Result::SUCCESS, std::move(cropped_frame));
+ }
+ 
+diff --git a/modules/desktop_capture/cropping_window_capturer.h b/modules/desktop_capture/cropping_window_capturer.h
+index 56478030b14332026db7c292f679b3834ee80da5..c89f11a7f9b452209eb0ac176021cb706b7cf5dd 100644
+--- a/modules/desktop_capture/cropping_window_capturer.h
++++ b/modules/desktop_capture/cropping_window_capturer.h
+@@ -66,6 +66,8 @@ class RTC_EXPORT CroppingWindowCapturer : public DesktopCapturer,
+   // from (0, 0).
+   virtual DesktopRect GetWindowRectInVirtualScreen() = 0;
+ 
++  virtual DesktopRect GetOriginalWindowRect() = 0;
++
+   WindowId selected_window() const { return selected_window_; }
+   WindowId excluded_window() const { return excluded_window_; }
+   DesktopCapturer* window_capturer() const { return window_capturer_.get(); }
+diff --git a/modules/desktop_capture/cropping_window_capturer_win.cc b/modules/desktop_capture/cropping_window_capturer_win.cc
+index ab2f807d337e7a07602b82080896c7cc687df83e..4d8ad96fa763531ce0cc0f807d144b86f0bd4461 100644
+--- a/modules/desktop_capture/cropping_window_capturer_win.cc
++++ b/modules/desktop_capture/cropping_window_capturer_win.cc
+@@ -139,6 +139,7 @@ class CroppingWindowCapturerWin : public CroppingWindowCapturer {
+  private:
+   bool ShouldUseScreenCapturer() override;
+   DesktopRect GetWindowRectInVirtualScreen() override;
++  DesktopRect GetOriginalWindowRect() override;
+ 
+   // Returns either selected by user sourceId or sourceId provided by
+   // FullScreenWindowDetector
+@@ -285,6 +286,19 @@ bool CroppingWindowCapturerWin::ShouldUseScreenCapturer() {
+   return context.IsTopWindow();
+ }
+ 
++DesktopRect CroppingWindowCapturerWin::GetOriginalWindowRect() {
++  DesktopRect window_rect;
++  DesktopRect original_rect;
++  HWND hwnd = reinterpret_cast<HWND>(GetWindowToCapture());
++  if (!GetCroppedWindowRect(hwnd, /*avoid_cropping_border*/ false, &window_rect,
++                            &original_rect)) {
++    RTC_LOG(LS_WARNING) << "Failed to get window info: " << GetLastError();
++    return original_rect;
++  }
++
++  return original_rect;
++}
++
+ DesktopRect CroppingWindowCapturerWin::GetWindowRectInVirtualScreen() {
+   TRACE_EVENT0("webrtc",
+                "CroppingWindowCapturerWin::GetWindowRectInVirtualScreen");
+diff --git a/modules/desktop_capture/desktop_frame.cc b/modules/desktop_capture/desktop_frame.cc
+index be61196c7d7115de479a75cef01e054139fef2d9..5235e351b4ecc7243febffe5f9e28e344802db06 100644
+--- a/modules/desktop_capture/desktop_frame.cc
++++ b/modules/desktop_capture/desktop_frame.cc
+@@ -132,6 +132,7 @@ void DesktopFrame::CopyFrameInfoFrom(const DesktopFrame& other) {
+   set_capturer_id(other.capturer_id());
+   *mutable_updated_region() = other.updated_region();
+   set_top_left(other.top_left());
++  set_original_window_rect(other.original_window_rect());
+   set_icc_profile(other.icc_profile());
+   set_may_contain_cursor(other.may_contain_cursor());
+ }
+@@ -143,6 +144,7 @@ void DesktopFrame::MoveFrameInfoFrom(DesktopFrame* other) {
+   mutable_updated_region()->Swap(other->mutable_updated_region());
+   set_top_left(other->top_left());
+   set_icc_profile(other->icc_profile());
++  set_original_window_rect(other->original_window_rect());
+   set_may_contain_cursor(other->may_contain_cursor());
+ }
+ 
+diff --git a/modules/desktop_capture/desktop_frame.h b/modules/desktop_capture/desktop_frame.h
+index 35ac8e2475525b71899e9d14538a8889aac88908..937915b2181a8f98679b6b676c907144466553f9 100644
+--- a/modules/desktop_capture/desktop_frame.h
++++ b/modules/desktop_capture/desktop_frame.h
+@@ -149,6 +149,11 @@ class RTC_EXPORT DesktopFrame {
+   // otherwise. Also returns false if the frame is empty.
+   bool FrameDataIsBlack() const;
+ 
++  const DesktopRect& original_window_rect() const { return original_window_rect_; }
++  void set_original_window_rect(const DesktopRect& new_rect) {
++    original_window_rect_ = new_rect;
++  }
++
+  protected:
+   DesktopFrame(DesktopSize size,
+                int stride,
+@@ -172,6 +177,7 @@ class RTC_EXPORT DesktopFrame {
+   int64_t capture_time_ms_;
+   uint32_t capturer_id_;
+   std::vector<uint8_t> icc_profile_;
++  DesktopRect original_window_rect_;
+ };
+ 
+ // A DesktopFrame that stores data in the heap.
+diff --git a/modules/desktop_capture/win/window_capturer_win_gdi.cc b/modules/desktop_capture/win/window_capturer_win_gdi.cc
+index bc3a76226454aeae468381ce8d3cf0c708bedbfc..0b8b2af66f580cb8ddb58d83f227592a4f2a9f8a 100644
+--- a/modules/desktop_capture/win/window_capturer_win_gdi.cc
++++ b/modules/desktop_capture/win/window_capturer_win_gdi.cc
+@@ -208,6 +208,9 @@ WindowCapturerWinGdi::CaptureResults WindowCapturerWinGdi::CaptureFrame(
+     return {Result::ERROR_TEMPORARY, nullptr};
+   }
+ 
++  //获取最原始的窗口bounds
++  DesktopRect original_widnow_rect = original_rect;
++
+   // Return a 1x1 black frame if the window is minimized or invisible on current
+   // desktop, to match behavior on mace. Window can be temporarily invisible
+   // during the transition of full screen mode on/off.
+@@ -390,6 +393,8 @@ WindowCapturerWinGdi::CaptureResults WindowCapturerWinGdi::CaptureFrame(
+     }
+   }
+ 
++  cropped_frame->set_original_window_rect(original_widnow_rect);
++
+   return {Result::SUCCESS, std::move(cropped_frame)};
+ }
+ 
+diff --git a/modules/desktop_capture/window_capturer_mac.mm b/modules/desktop_capture/window_capturer_mac.mm
+index 56c94baada764ba09c6b5e6ac909d38fa7f0cc85..d7aae60187b96fb91480c8805e26d46b95f3e8f2 100644
+--- a/modules/desktop_capture/window_capturer_mac.mm
++++ b/modules/desktop_capture/window_capturer_mac.mm
+@@ -199,7 +199,11 @@ explicit WindowCapturerMac(
+ 
+   frame->mutable_updated_region()->SetRect(
+       DesktopRect::MakeSize(frame->size()));
+-  frame->set_top_left(GetWindowBounds(on_screen_window).top_left());
++
++  DesktopRect original_window_rect = GetWindowBounds(on_screen_window);
++  frame->set_top_left(original_window_rect.top_left());
++
++  frame->set_original_window_rect(original_window_rect);
+ 
+   float scale_factor = GetWindowScaleFactor(window_id_, frame->size());
+   frame->set_dpi(DesktopVector(kStandardDPI * scale_factor, kStandardDPI * scale_factor));
