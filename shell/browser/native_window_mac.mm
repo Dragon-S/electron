@@ -1265,7 +1265,9 @@ void NativeWindowMac::SetHiddenInMissionControl(bool hidden) {
   SetCollectionBehavior(hidden, NSWindowCollectionBehaviorTransient);
 }
 
-void NativeWindowMac::SetIgnoreMouseEvents(bool ignore, bool forward) {
+void NativeWindowMac::SetIgnoreMouseEvents(bool ignore,
+                                           bool forward,
+                                           bool flag) {
   [window_ setIgnoresMouseEvents:ignore];
   if (!ignore) {
     SetForwardMouseMessages(NO);
