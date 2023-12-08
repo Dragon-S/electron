@@ -141,3 +141,4 @@ revert_same_party_cookie_attribute_removal.patch
 fix_restore_original_resize_performance_on_macos.patch
 fix_font_flooding_in_dev_tools.patch
 supports_getting_bounds_of_shared_windows.patch
+windows_support_isentirelycovered.patch
