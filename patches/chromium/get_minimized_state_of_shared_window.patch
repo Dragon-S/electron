@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Mon, 11 Dec 2023 14:04:42 +0800
+Subject: get minimized state of shared window
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+取共享窗口最小化状态
+
+diff --git a/content/browser/media/capture/desktop_capture_device.cc b/content/browser/media/capture/desktop_capture_device.cc
+index aa8415f807b9a107e65a422b2c16829b1d0655b3..2def5c6e8b389785e56eabf3512bda8e0d50d95e 100644
+--- a/content/browser/media/capture/desktop_capture_device.cc
++++ b/content/browser/media/capture/desktop_capture_device.cc
+@@ -96,6 +96,13 @@ void OnMediaFrameBoundChanged(const gfx::Rect& bound) {
+   media_frame_bound_indicator->OnMediaFrameBoundChanged(bound);
+ }
+ 
++void OnSharedWindowMinimizedStateChanged(bool minimized) {
++  DCHECK_CURRENTLY_ON(BrowserThread::UI);
++  NativeDesktopMediaFrameBoundIndicator* media_frame_bound_indicator =
++    NativeDesktopMediaFrameBoundIndicator::GetInstance();
++  media_frame_bound_indicator->OnSharedWindowMinimizedStateChanged(minimized);
++}
++
+ void BindWakeLockProvider(
+     mojo::PendingReceiver<device::mojom::WakeLockProvider> receiver) {
+   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+@@ -498,6 +505,15 @@ void DesktopCaptureDevice::Core::OnCaptureResult(
+           FROM_HERE, base::BindOnce(&OnMediaFrameBoundChanged, bound));
+     }
+ 
++    if (result == webrtc::DesktopCapturer::Result::ERROR_TEMPORARY) {
++      if ((capturer_type_ == DesktopMediaID::TYPE_WINDOW)
++        && (BrowserThread::IsThreadInitialized(BrowserThread::UI))) {
++        bool minimized = true;
++        GetUIThreadTaskRunner({})->PostTask(
++            FROM_HERE, base::BindOnce(&OnSharedWindowMinimizedStateChanged, minimized));
++      }
++    }
++
+     // Continue capturing frames in the temporary error case.
+     ScheduleNextCaptureFrame();
+     return;
+@@ -662,6 +678,13 @@ void DesktopCaptureDevice::Core::OnCaptureResult(
+     frame_color_space = icc_profile.GetColorSpace();
+   }
+ 
++  if ((capturer_type_ == DesktopMediaID::TYPE_WINDOW)
++    && (BrowserThread::IsThreadInitialized(BrowserThread::UI))) {
++    bool minimized = frame->shared_window_minimized();
++    GetUIThreadTaskRunner({})->PostTask(
++        FROM_HERE, base::BindOnce(&OnSharedWindowMinimizedStateChanged, minimized));
++  }
++
+   base::TimeTicks now = NowTicks();
+   if (first_ref_time_.is_null())
+     first_ref_time_ = now;
