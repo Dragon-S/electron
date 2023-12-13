@@ -66,15 +66,16 @@ index 0000000000000000000000000000000000000000..e39077be7bb75bdca4dacec160ee5f4e
 \ No newline at end of file
 diff --git a/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..ee0db496c3f76ded9a37732d91849ad1603462b2
+index 0000000000000000000000000000000000000000..f9d8bf5c4e73212da094904f55b7144cb82fc472
 --- /dev/null
 +++ b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,37 @@
 +#ifndef CHROME_BROWSER_MEDIA_WEBRTC_NATIVE_DESKTOP_MEDIA_FRAME_BOUND_INDICATOR_H_
 +#define CHROME_BROWSER_MEDIA_WEBRTC_NATIVE_DESKTOP_MEDIA_FRAME_BOUND_INDICATOR_H_
 +
 +#include "base/memory/singleton.h"
 +#include "ui/gfx/geometry/rect.h"
++#include "base/memory/raw_ptr.h"
 +
 +class NativeDesktopMediaFrameBoundObserver {
 + public:
