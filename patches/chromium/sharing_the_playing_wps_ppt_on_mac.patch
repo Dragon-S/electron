@@ -1,0 +1,148 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Mon, 18 Dec 2023 16:50:27 +0800
+Subject: sharing the playing wps ppt on mac
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+在Mac12.3以上共享wps ppt, ppt播放后远端看不到播放画面
+
+diff --git a/content/browser/media/capture/screen_capture_kit_device_mac.mm b/content/browser/media/capture/screen_capture_kit_device_mac.mm
+index ebbf5dde9051a2655537861a793fd27a3cde9977..e5d74472c35cf9db2a0885aa3578355b3108f9d3 100644
+--- a/content/browser/media/capture/screen_capture_kit_device_mac.mm
++++ b/content/browser/media/capture/screen_capture_kit_device_mac.mm
+@@ -228,6 +228,7 @@ class API_AVAILABLE(macos(12.3)) ScreenCaptureKitDeviceMac
+   explicit ScreenCaptureKitDeviceMac(const DesktopMediaID& source)
+       : source_(source),
+         device_task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()) {
++    window_id_ = source_.id;
+     SampleCallback sample_callback = base::BindPostTask(
+         base::SingleThreadTaskRunner::GetCurrentDefault(),
+         base::BindRepeating(&ScreenCaptureKitDeviceMac::OnStreamSample,
+@@ -450,12 +451,12 @@ void OnStreamError() {
+   }
+ 
+   void CheckForBoundsChange() {
+-    bool isMinimized = !IsWindowOnScreen(source_.id);
++    bool isMinimized = !IsWindowOnScreen(window_id_);
+     if ((source_.type == DesktopMediaID::TYPE_WINDOW)
+       && (BrowserThread::IsThreadInitialized(BrowserThread::UI))) {
+       gfx::Rect bounds = gfx::Rect(0, 0, 0, 0);
+       if (!isMinimized) {
+-        CGRect frame = GetWindowBounds(source_.id);
++        CGRect frame = GetWindowBounds(window_id_);
+         bounds = gfx::Rect(frame.origin.x,
+                   frame.origin.y,
+                   frame.size.width,
+@@ -481,13 +482,17 @@ void OnStart() override {
+     [SCShareableContent getShareableContentWithCompletionHandler:handler];
+ 
+     // 开启定时器检查窗口状态
+-    timer_.Start(
+-        FROM_HERE, base::Milliseconds(800), this,
+-        &ScreenCaptureKitDeviceMac::CheckForBoundsChange);
++    if (source_.type == DesktopMediaID::TYPE_WINDOW) {
++      timer_.Start(
++          FROM_HERE, base::Milliseconds(800), this,
++          &ScreenCaptureKitDeviceMac::CheckForBoundsChange);
++    }
+   }
+   void OnStop() override {
+     // 停止定时器
+-    timer_.Stop();
++    if (source_.type == DesktopMediaID::TYPE_WINDOW) {
++      timer_.Stop();
++    }
+ 
+     if (stream_) {
+       auto stream_started_callback = base::BindPostTask(
+@@ -524,6 +529,7 @@ void ResetStreamTo(SCWindow* window) override {
+     is_resetting_ = true;
+     SCContentFilter* filter =
+         [[SCContentFilter alloc] initWithDesktopIndependentWindow:window];
++    window_id_ = window.windowID;
+ 
+     [stream_ updateContentFilter:filter
+                completionHandler:^(NSError* _Nullable error) {
+@@ -565,6 +571,8 @@ void ResetStreamTo(SCWindow* window) override {
+ 
+   base::RepeatingTimer timer_;
+ 
++  CGWindowID window_id_ = kCGNullWindowID;
++
+   base::WeakPtrFactory<ScreenCaptureKitDeviceMac> weak_factory_{this};
+ };
+ 
+diff --git a/content/browser/media/capture/screen_capture_kit_fullscreen_module.h b/content/browser/media/capture/screen_capture_kit_fullscreen_module.h
+index def9d09cb0255b81c695d54f9684bf5e61d582dd..35363400678c22de593d21b8d583371270db24d6 100644
+--- a/content/browser/media/capture/screen_capture_kit_fullscreen_module.h
++++ b/content/browser/media/capture/screen_capture_kit_fullscreen_module.h
+@@ -35,7 +35,8 @@ class API_AVAILABLE(macos(12.3))
+     kOpenOffice = 2,
+     kKeynote = 3,
+     kLibreOffice = 4,
+-    kMaxValue = kLibreOffice,
++    kWpsOffice = 5,
++    kMaxValue = kWpsOffice,
+   };
+ 
+   using ContentHandler = base::OnceCallback<void(SCShareableContent*)>;
+diff --git a/content/browser/media/capture/screen_capture_kit_fullscreen_module.mm b/content/browser/media/capture/screen_capture_kit_fullscreen_module.mm
+index 21c548773c6ece9f4708edfb850cdf212c245738..1cebdc86ef233b6024d4538eee9b4744cb6f2804 100644
+--- a/content/browser/media/capture/screen_capture_kit_fullscreen_module.mm
++++ b/content/browser/media/capture/screen_capture_kit_fullscreen_module.mm
+@@ -23,6 +23,8 @@
+ static NSString* const kApplicationNamePowerPoint = @"Microsoft PowerPoint";
+ static NSString* const kApplicationNameOpenOffice = @"OpenOffice";
+ 
++static NSString* const kApplicationNameWpsOffice = @"WPS Office";
++
+ static NSString* const kEditorWindowNameOpenOffice = @" OpenOffice Impress";
+ 
+ bool IsPowerPointSlideShow(NSString* window_title) {
+@@ -129,6 +131,14 @@ void API_AVAILABLE(macos(12.3))
+       LogModeToUma(ScreenCaptureKitFullscreenModule::Mode::kLibreOffice);
+       return nullptr;
+     }
++    if ([kApplicationNameWpsOffice
++            isEqualToString:original_window.owningApplication
++                                .applicationName]) {
++      return std::make_unique<ScreenCaptureKitFullscreenModule>(
++          device_task_runner, reset_stream_interface, original_window.windowID,
++          original_window.owningApplication.processID,
++          ScreenCaptureKitFullscreenModule::Mode::kWpsOffice);
++    }
+   }
+   LogModeToUma(ScreenCaptureKitFullscreenModule::Mode::kUnsupported);
+   return nullptr;
+@@ -157,7 +167,7 @@ void API_AVAILABLE(macos(12.3))
+   // than 1 second. Reducing the delay would increase the responsiveness at the
+   // cost of a higher CPU load.
+   timer_.Start(
+-      FROM_HERE, base::Milliseconds(800), this,
++      FROM_HERE, base::Milliseconds(300), this,
+       &ScreenCaptureKitFullscreenModule::CheckForFullscreenPresentation);
+ }
+ 
+@@ -212,7 +222,7 @@ void API_AVAILABLE(macos(12.3))
+     // window otherwise.
+     for (SCWindow* window : [content windows]) {
+       if (window.windowID == fullscreen_window_id_) {
+-        if (!window.isOnScreen) {
++        if (!window.onScreen) {
+           fullscreen_mode_active_ = false;
+           reset_stream_interface_.ResetStreamTo(editor_window);
+         }
+@@ -275,6 +285,11 @@ void API_AVAILABLE(macos(12.3))
+             fullscreenWindowLayer = window.windowLayer;
+           }
+           break;
++        case Mode::kWpsOffice:
++          if (!editor_window.onScreen) {
++            fullscreen_window = window;
++          }
++          break;
+         case Mode::kLibreOffice:
+         // TODO(crbug.com/1348011): Implement support for LibreOffice.
+         case Mode::kUnsupported:
