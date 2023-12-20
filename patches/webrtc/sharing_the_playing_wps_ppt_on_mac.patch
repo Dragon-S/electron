@@ -22,7 +22,7 @@ index 2ad5474e444f4d760c7bcc7f56d333e2aec1f314..70a15e9a9eac4f3547583639e74032d5
  
  typedef std::vector<MacDisplayConfiguration> MacDisplayConfigurations;
 diff --git a/modules/desktop_capture/mac/desktop_configuration.mm b/modules/desktop_capture/mac/desktop_configuration.mm
-index 93fb3f622652818096a5b54a16fe72a75c5ccf8b..3b8f6f7364d15375c856a7a53123f25cc2ee482b 100644
+index 93fb3f622652818096a5b54a16fe72a75c5ccf8b..d9018b1a63b9cdc1a21943fa85897dce219bd61e 100644
 --- a/modules/desktop_capture/mac/desktop_configuration.mm
 +++ b/modules/desktop_capture/mac/desktop_configuration.mm
 @@ -74,6 +74,11 @@ MacDisplayConfiguration GetConfigurationForScreen(NSScreen* screen) {
@@ -31,14 +31,14 @@ index 93fb3f622652818096a5b54a16fe72a75c5ccf8b..3b8f6f7364d15375c856a7a53123f25c
  
 +  //12.0以上系统，获取刘海高度
 +  if (@available(macOS 12, *)) {
-+    display_config.notch_hight = [screen safeAreaInsets].top + 5;
++    display_config.notch_hight = [screen safeAreaInsets].top;
 +  }
 +
    return display_config;
  }
  
 diff --git a/modules/desktop_capture/mac/full_screen_mac_application_handler.cc b/modules/desktop_capture/mac/full_screen_mac_application_handler.cc
-index 45cd3223d29075ae513eecf21d2637b14e9a1771..2b9b7417f0c164fe92ee2c992811c322e1131ba1 100644
+index 45cd3223d29075ae513eecf21d2637b14e9a1771..f56dc9689ab27c6c83a046bbd13ac5d1a9bfdfbb 100644
 --- a/modules/desktop_capture/mac/full_screen_mac_application_handler.cc
 +++ b/modules/desktop_capture/mac/full_screen_mac_application_handler.cc
 @@ -201,6 +201,52 @@ class OpenOfficeApplicationHandler : public FullScreenMacApplicationHandler {
@@ -80,7 +80,7 @@ index 45cd3223d29075ae513eecf21d2637b14e9a1771..2b9b7417f0c164fe92ee2c992811c322
 +    const auto slide_show_window = std::find_if(
 +        cache_sources_.begin(), cache_sources_.end(), [&](const auto& src) {
 +          return src.title.empty() &&
-+                 IsWindowFullScreenWPS(desktop_config, src.id);
++                 IsWindowFullScreen(desktop_config, src.id);
 +        });
 +
 +    if (slide_show_window == cache_sources_.end()) {
@@ -104,69 +104,26 @@ index 45cd3223d29075ae513eecf21d2637b14e9a1771..2b9b7417f0c164fe92ee2c992811c322
  
      if (predicate) {
 diff --git a/modules/desktop_capture/mac/window_list_utils.cc b/modules/desktop_capture/mac/window_list_utils.cc
-index 5d881662ea2f2d86d2c33bf20f79d31ef4e7a481..21f2d4d0458dcb6e113690960b5760c43ba05159 100644
+index 5d881662ea2f2d86d2c33bf20f79d31ef4e7a481..e9b84a7e87a9dc1b69e7be7f5d1c9d2a05242e47 100644
 --- a/modules/desktop_capture/mac/window_list_utils.cc
 +++ b/modules/desktop_capture/mac/window_list_utils.cc
-@@ -269,6 +269,43 @@ bool IsWindowFullScreen(const MacDesktopConfiguration& desktop_config,
-   return fullscreen;
- }
- 
-+// Returns true if the window is occupying a full screen.
-+bool IsWindowFullScreenWPS(const MacDesktopConfiguration& desktop_config,
-+                           CFDictionaryRef window) {
-+  bool fullscreen = false;
-+  CFDictionaryRef bounds_ref = reinterpret_cast<CFDictionaryRef>(
-+      CFDictionaryGetValue(window, kCGWindowBounds));
-+
-+  CGRect bounds;
-+  if (bounds_ref &&
-+      CGRectMakeWithDictionaryRepresentation(bounds_ref, &bounds)) {
-+    for (MacDisplayConfigurations::const_iterator it =
-+             desktop_config.displays.begin();
-+         it != desktop_config.displays.end(); it++) {
-+      if (it->bounds.equals(
-+              DesktopRect::MakeXYWH(bounds.origin.x, bounds.origin.y,
-+                                    bounds.size.width, bounds.size.height)) ||
-+          (it->notch_hight != 0.0 && it->bounds.equals(
-+              DesktopRect::MakeXYWH(bounds.origin.x, bounds.origin.y - it->notch_hight,
-+                                    bounds.size.width, bounds.size.height + it->notch_hight)))) {
-+        fullscreen = true;
-+        break;
+@@ -248,9 +248,18 @@ bool IsWindowFullScreen(const MacDesktopConfiguration& desktop_config,
+     for (MacDisplayConfigurations::const_iterator it =
+              desktop_config.displays.begin();
+          it != desktop_config.displays.end(); it++) {
++      //正常的notch_hight = 32，但是wps的是37
++      float notch_hight = it->notch_hight;
++      const std::string owner_name = GetWindowOwnerName(window);
++      if (owner_name.find("WPS Office") == 0) {
++        notch_hight += 5.0;
 +      }
-+    }
-+  }
-+
-+  return fullscreen;
-+}
-+
-+bool IsWindowFullScreenWPS(const MacDesktopConfiguration& desktop_config,
-+                           CGWindowID id) {
-+  bool fullscreen = false;
-+  GetWindowRef(id, [&](CFDictionaryRef window) {
-+    fullscreen = IsWindowFullScreenWPS(desktop_config, window);
-+  });
-+  return fullscreen;
-+}
-+
- bool IsWindowOnScreen(CFDictionaryRef window) {
-   CFBooleanRef on_screen = reinterpret_cast<CFBooleanRef>(
-       CFDictionaryGetValue(window, kCGWindowIsOnscreen));
-diff --git a/modules/desktop_capture/mac/window_list_utils.h b/modules/desktop_capture/mac/window_list_utils.h
-index 5d6f2aa5fc57cffba60e47018cf28fdbe01e6b51..bfbad4c174710bc3cff6530e5ab40f93fa41a6e5 100644
---- a/modules/desktop_capture/mac/window_list_utils.h
-+++ b/modules/desktop_capture/mac/window_list_utils.h
-@@ -48,6 +48,14 @@ bool IsWindowFullScreen(const MacDesktopConfiguration& desktop_config,
- bool IsWindowFullScreen(const MacDesktopConfiguration& desktop_config,
-                         CGWindowID id);
- 
-+// Returns true if the window is occupying a full screen.
-+bool IsWindowFullScreenWPS(const MacDesktopConfiguration& desktop_config,
-+                           CFDictionaryRef window);
-+
-+// Returns true if the window is occupying a full screen.
-+bool IsWindowFullScreenWPS(const MacDesktopConfiguration& desktop_config,
-+                           CGWindowID id);
-+
- // Returns true if the `window` is on screen. This function returns false if
- // native APIs fail.
- bool IsWindowOnScreen(CFDictionaryRef window);
+       if (it->bounds.equals(
+               DesktopRect::MakeXYWH(bounds.origin.x, bounds.origin.y,
+-                                    bounds.size.width, bounds.size.height))) {
++                                    bounds.size.width, bounds.size.height)) ||
++          (notch_hight != 0.0 && it->bounds.equals(
++              DesktopRect::MakeXYWH(bounds.origin.x, bounds.origin.y - notch_hight,
++                                    bounds.size.width, bounds.size.height + notch_hight)))) {
+         fullscreen = true;
+         break;
+       }
