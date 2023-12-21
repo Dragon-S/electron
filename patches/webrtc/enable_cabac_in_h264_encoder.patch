@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Thu, 21 Dec 2023 14:08:56 +0800
+Subject: Enable CABAC in H264 encoder
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+h264编码使用CABAC熵编码(提高压缩率)
+
+diff --git a/modules/video_coding/codecs/h264/h264_encoder_impl.cc b/modules/video_coding/codecs/h264/h264_encoder_impl.cc
+index ee69b9befba4252d6635ea7665e7156a5e54c690..6987ac295f99bbc30c0a89387790fb85452fd13c 100644
+--- a/modules/video_coding/codecs/h264/h264_encoder_impl.cc
++++ b/modules/video_coding/codecs/h264/h264_encoder_impl.cc
+@@ -644,6 +644,7 @@ SEncParamExt H264EncoderImpl::CreateEncoderParams(size_t i) const {
+   // equivalent to CONSTANT_ID.
+   encoder_params.eSpsPpsIdStrategy = SPS_LISTING;
+   encoder_params.uiMaxNalSize = 0;
++  encoder_params.iEntropyCodingModeFlag = 1;
+   // Threading model: use auto.
+   //  0: auto (dynamic imp. internal encoder)
+   //  1: single thread (default value)
