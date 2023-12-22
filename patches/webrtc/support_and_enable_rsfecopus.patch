@@ -8,6 +8,21 @@ Content-Transfer-Encoding: 8bit
 
 音频编码支持rsfecopus, 并且设置为默认,代替原来的opus
 
+diff --git a/BUILD.gn b/BUILD.gn
+index 7e8325e306bebe5ca024ad7ab77c64a84ef8b692..35f067085b49c385ecd70b728fed8bc459973cd8 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -322,6 +322,10 @@ config("common_config") {
+     defines += [ "WEBRTC_USE_H264" ]
+   }
+ 
++  if (rtc_enable_rsfecopus) {
++    defines += [ "WEBRTC_ENABLE_RSFECOPUS" ]
++  }
++
+   if (rtc_use_absl_mutex) {
+     defines += [ "WEBRTC_ABSL_MUTEX" ]
+   }
 diff --git a/api/audio_codecs/opus/audio_decoder_opus.cc b/api/audio_codecs/opus/audio_decoder_opus.cc
 index efc9a73546efe75d00d1d0f0ead2969135406eb5..40f1589e269fc302febe137f6c0491ad517ae7a3 100644
 --- a/api/audio_codecs/opus/audio_decoder_opus.cc
@@ -34,18 +49,20 @@ index efc9a73546efe75d00d1d0f0ead2969135406eb5..40f1589e269fc302febe137f6c0491ad
        {"opus", 48000, 2, {{"minptime", "10"}, {"useinbandfec", "1"}}});
    specs->push_back({std::move(opus_format), opus_info});
 diff --git a/audio/channel_receive.cc b/audio/channel_receive.cc
-index f5d214f672a63410c77c5799127e35b4c7da337e..5f4841103bb23e494f2c81e60104fbb9df70e415 100644
+index f5d214f672a63410c77c5799127e35b4c7da337e..b15299818eeba7b9243694240ee401fa2d7ffb94 100644
 --- a/audio/channel_receive.cc
 +++ b/audio/channel_receive.cc
-@@ -42,6 +42,7 @@
+@@ -42,6 +42,9 @@
  #include "modules/rtp_rtcp/source/rtp_packet_received.h"
  #include "modules/rtp_rtcp/source/rtp_rtcp_config.h"
  #include "modules/rtp_rtcp/source/rtp_rtcp_impl2.h"
++#ifdef WEBRTC_ENABLE_RSFECOPUS
 +#include "modules/rtp_rtcp/source/rs_fec.h"
++#endif // WEBRTC_ENABLE_RSFECOPUS
  #include "rtc_base/checks.h"
  #include "rtc_base/logging.h"
  #include "rtc_base/numerics/safe_minmax.h"
-@@ -53,6 +54,7 @@
+@@ -53,6 +56,7 @@
  #include "rtc_base/trace_event.h"
  #include "system_wrappers/include/metrics.h"
  #include "system_wrappers/include/ntp_time.h"
@@ -53,33 +70,33 @@ index f5d214f672a63410c77c5799127e35b4c7da337e..5f4841103bb23e494f2c81e60104fbb9
  
  namespace webrtc {
  namespace voe {
-@@ -312,6 +314,12 @@ class ChannelReceive : public ChannelReceiveInterface,
+@@ -312,6 +316,12 @@ class ChannelReceive : public ChannelReceiveInterface,
    mutable Mutex rtcp_counter_mutex_;
    RtcpPacketTypeCounter rtcp_packet_type_counter_
        RTC_GUARDED_BY(rtcp_counter_mutex_);
 +
-+#ifdef RS_FEC
++#ifdef WEBRTC_ENABLE_RSFECOPUS
 +  //Reed-Solomon
 +  std::unique_ptr<RsFecDecoder> rs_decoder_;
 +  // int plr_;
-+#endif // RS_FEC
++#endif // WEBRTC_ENABLE_RSFECOPUS
  };
  
  void ChannelReceive::OnReceivedPayloadData(
-@@ -593,6 +601,12 @@ ChannelReceive::ChannelReceive(
+@@ -593,6 +603,12 @@ ChannelReceive::ChannelReceive(
  
    // Ensure that RTCP is enabled for the created channel.
    rtp_rtcp_->SetRTCPStatus(RtcpMode::kCompound);
 +
-+#ifdef RS_FEC
++#ifdef WEBRTC_ENABLE_RSFECOPUS
 +  //Reed-Solomon
 +  rs_decoder_.reset(new RsFecDecoder());
 +  rs_decoder_->Init();
-+#endif // RS_FEC
++#endif // WEBRTC_ENABLE_RSFECOPUS
  }
  
  ChannelReceive::~ChannelReceive() {
-@@ -665,16 +679,57 @@ void ChannelReceive::OnRtpPacket(const RtpPacketReceived& packet) {
+@@ -665,16 +681,57 @@ void ChannelReceive::OnRtpPacket(const RtpPacketReceived& packet) {
    RTPHeader header;
    packet_copy.GetHeader(&header);
  
@@ -96,7 +113,7 @@ index f5d214f672a63410c77c5799127e35b4c7da337e..5f4841103bb23e494f2c81e60104fbb9
 +    return;
 +  }
 +
-+#ifdef RS_FEC
++#ifdef WEBRTC_ENABLE_RSFECOPUS
 +  if(header.payloadType == RS_FEC_PAYLOAD_TYPE)
 +  {
 +
@@ -130,7 +147,7 @@ index f5d214f672a63410c77c5799127e35b4c7da337e..5f4841103bb23e494f2c81e60104fbb9
 +    }
 +  }
 +  else
-+#endif // RS_FEC
++#endif // WEBRTC_ENABLE_RSFECOPUS
 +  {
 +    // Interpolates absolute capture timestamp RTP header extension.
 +    header.extension.absolute_capture_time =
@@ -147,22 +164,24 @@ index f5d214f672a63410c77c5799127e35b4c7da337e..5f4841103bb23e494f2c81e60104fbb9
  
  void ChannelReceive::ReceivePacket(const uint8_t* packet,
 diff --git a/audio/channel_send.cc b/audio/channel_send.cc
-index 08dd74591d8d5ea043b5c9955c92803e287c3d47..f264d3c77d43f8db1307c6c381fc939ee3d13afe 100644
+index 08dd74591d8d5ea043b5c9955c92803e287c3d47..69edda24e8636602b547a20ec77dba4501f05925 100644
 --- a/audio/channel_send.cc
 +++ b/audio/channel_send.cc
-@@ -31,6 +31,7 @@
+@@ -31,6 +31,9 @@
  #include "modules/audio_processing/rms_level.h"
  #include "modules/pacing/packet_router.h"
  #include "modules/rtp_rtcp/source/rtp_rtcp_impl2.h"
++#ifdef WEBRTC_ENABLE_RSFECOPUS
 +#include "modules/rtp_rtcp/source/rs_fec.h"
++#endif // WEBRTC_ENABLE_RSFECOPUS
  #include "rtc_base/checks.h"
  #include "rtc_base/event.h"
  #include "rtc_base/logging.h"
-@@ -550,6 +551,59 @@ void ChannelSend::OnReportBlockDataUpdated(ReportBlockData report_block) {
+@@ -550,6 +553,59 @@ void ChannelSend::OnReportBlockDataUpdated(ReportBlockData report_block) {
    float packet_loss_rate = report_block.fraction_lost();
    CallEncoder([&](AudioEncoder* encoder) {
      encoder->OnReceivedUplinkPacketLossFraction(packet_loss_rate);
-+#ifdef RS_FEC
++#ifdef WEBRTC_ENABLE_RSFECOPUS
 +    uint32_t jitter = report_block.jitter();
 +    uint32_t downlink_plr = report_block.cumulative_lost() & 0x7;
 +    if (rtp_sender_audio_->GetRsStatus()) {
@@ -214,7 +233,7 @@ index 08dd74591d8d5ea043b5c9955c92803e287c3d47..f264d3c77d43f8db1307c6c381fc939e
 +      rtp_sender_audio_->SetRsPara(n);
 +      encoder->OnReceivedTargetAudioBitrate(audio_bitrate);
 +    }
-+#endif // RS_FEC
++#endif // WEBRTC_ENABLE_RSFECOPUS
    });
  }
  
@@ -287,18 +306,23 @@ index 51b0fcd492599ed088f1017bf16e9524653ef389..094fba4bb04d5f0f93591cddc58013a7
      return absl::nullopt;
    }
 diff --git a/modules/rtp_rtcp/BUILD.gn b/modules/rtp_rtcp/BUILD.gn
-index 0fc9931f3985079c92440e5a761fc680a010cb6f..1f945c8575440b5ce23c380ead74c3cb10549720 100644
+index 0fc9931f3985079c92440e5a761fc680a010cb6f..1bda72cced85d066af04e65497739d6db12d7cb6 100644
 --- a/modules/rtp_rtcp/BUILD.gn
 +++ b/modules/rtp_rtcp/BUILD.gn
-@@ -256,6 +256,8 @@ rtc_library("rtp_rtcp") {
-     "source/video_rtp_depacketizer_vp8.h",
-     "source/video_rtp_depacketizer_vp9.cc",
+@@ -258,6 +258,13 @@ rtc_library("rtp_rtcp") {
      "source/video_rtp_depacketizer_vp9.h",
-+    "source/rs_fec.cc",
-+    "source/rs_fec.h",
    ]
  
++  if (rtc_enable_rsfecopus) {
++    sources += [
++      "source/rs_fec.cc",
++      "source/rs_fec.h",
++    ]
++  }
++
    if (rtc_enable_bwe_test_logging) {
+     defines = [ "BWE_TEST_LOGGING_COMPILE_TIME_ENABLE=1" ]
+   } else {
 diff --git a/modules/rtp_rtcp/source/rs_fec.cc b/modules/rtp_rtcp/source/rs_fec.cc
 new file mode 100644
 index 0000000000000000000000000000000000000000..4d3efb57407b183bbfdb70b5d1ea21df1185222a
@@ -1849,14 +1873,13 @@ index 0000000000000000000000000000000000000000..4d3efb57407b183bbfdb70b5d1ea21df
 \ No newline at end of file
 diff --git a/modules/rtp_rtcp/source/rs_fec.h b/modules/rtp_rtcp/source/rs_fec.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..878070892f15c4835d1125d9b7484d9c2aab1505
+index 0000000000000000000000000000000000000000..b1dff7d9f93138144a840652020856276e99b352
 --- /dev/null
 +++ b/modules/rtp_rtcp/source/rs_fec.h
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,144 @@
 +#ifndef WEBRTC_MODULES_RTP_RTCP_SOURCE_RS_FEC_H_
 +#define WEBRTC_MODULES_RTP_RTCP_SOURCE_RS_FEC_H_
 +
-+#define RS_FEC
 +#define RS_FEC_PAYLOAD_TYPE 115
 +
 +#define FEC_K  6
@@ -1999,29 +2022,29 @@ index 0000000000000000000000000000000000000000..878070892f15c4835d1125d9b7484d9c
 +
 +#endif
 diff --git a/modules/rtp_rtcp/source/rtp_sender_audio.cc b/modules/rtp_rtcp/source/rtp_sender_audio.cc
-index b826c30e07ba342e012bbeeba22040f0cc636f7d..e6165d76095b8840109e642c36fda24acd4b776f 100644
+index b826c30e07ba342e012bbeeba22040f0cc636f7d..08cd28408d2622cacbdac6ad71ca6afd0ae81776 100644
 --- a/modules/rtp_rtcp/source/rtp_sender_audio.cc
 +++ b/modules/rtp_rtcp/source/rtp_sender_audio.cc
 @@ -56,9 +56,22 @@ RTPSenderAudio::RTPSenderAudio(Clock* clock, RTPSender* rtp_sender)
        rtp_sender_(rtp_sender),
        absolute_capture_time_sender_(clock) {
    RTC_DCHECK(clock_);
-+#ifdef RS_FEC
++#ifdef WEBRTC_ENABLE_RSFECOPUS
 +  rs_encoder_ = new RsFecEncoder;
 +  int n = 8;
 +  rs_encoder_->Init(n,48000);
 +  rs_encoder_->SetFECStatus(false);
-+#endif // RS_FEC
++#endif // WEBRTC_ENABLE_RSFECOPUS
  }
  
 -RTPSenderAudio::~RTPSenderAudio() {}
 +RTPSenderAudio::~RTPSenderAudio() {
-+#ifdef RS_FEC
++#ifdef WEBRTC_ENABLE_RSFECOPUS
 +  if(rs_encoder_ != NULL)
 +  {
 +    delete rs_encoder_;
 +  }
-+#endif // RS_FEC
++#endif // WEBRTC_ENABLE_RSFECOPUS
 +}
  
  int32_t RTPSenderAudio::RegisterAudioPayload(absl::string_view payload_name,
@@ -2030,7 +2053,7 @@ index b826c30e07ba342e012bbeeba22040f0cc636f7d..e6165d76095b8840109e642c36fda24a
    TRACE_EVENT_ASYNC_STEP1("webrtc", "Audio", frame.rtp_timestamp, "Send",
                            "type", FrameTypeToString(frame.type));
  
-+#ifdef RS_FEC
++#ifdef WEBRTC_ENABLE_RSFECOPUS
 +  if(frame.payload_id == RS_FEC_PAYLOAD_TYPE) {
 +    if(rs_encoder_->GetFECStatus() == false)
 +    {
@@ -2043,7 +2066,7 @@ index b826c30e07ba342e012bbeeba22040f0cc636f7d..e6165d76095b8840109e642c36fda24a
 +  const uint8_t* payload_data = frame.payload.data();
 +  size_t payload_size = frame.payload.size();
 +  int8_t payload_type = frame.payload_id;
-+#endif // RS_FEC
++#endif // WEBRTC_ENABLE_RSFECOPUS
 +
    // From RFC 4733:
    // A source has wide latitude as to how often it sends event updates. A
@@ -2052,7 +2075,7 @@ index b826c30e07ba342e012bbeeba22040f0cc636f7d..e6165d76095b8840109e642c36fda24a
      packet->SetExtension<AbsoluteCaptureTimeExtension>(*absolute_capture_time);
    }
  
-+#ifdef RS_FEC
++#ifdef WEBRTC_ENABLE_RSFECOPUS
 +  if (rs_encoder_->GetFECStatus()){//
 +    uint8_t data_buffer[IP_PACKET_SIZE];
 +    int8_t  pt = rs_encoder_->GetPt();
@@ -2084,7 +2107,7 @@ index b826c30e07ba342e012bbeeba22040f0cc636f7d..e6165d76095b8840109e642c36fda24a
    uint8_t* payload = packet->AllocatePayload(frame.payload.size());
    RTC_CHECK(payload);
    memcpy(payload, frame.payload.data(), frame.payload.size());
-+#endif // RS_FEC
++#endif // WEBRTC_ENABLE_RSFECOPUS
  
    {
      MutexLock lock(&send_audio_mutex_);
@@ -2093,7 +2116,7 @@ index b826c30e07ba342e012bbeeba22040f0cc636f7d..e6165d76095b8840109e642c36fda24a
      RTC_LOG(LS_INFO) << "First audio RTP packet sent to pacer";
    }
 +
-+#ifdef RS_FEC
++#ifdef WEBRTC_ENABLE_RSFECOPUS
 +  if (rs_encoder_->GetFECStatus()){//
 +      while(rs_encoder_->IsNeedSendRedPkg()){
 +      std::unique_ptr<RtpPacketToSend> packet_red = rtp_sender_->AllocatePacket();
@@ -2140,12 +2163,12 @@ index b826c30e07ba342e012bbeeba22040f0cc636f7d..e6165d76095b8840109e642c36fda24a
 +      rtp_sender_->EnqueuePackets(std::move(packets));
 +    }
 +  }
-+#endif // RS_FEC
++#endif // WEBRTC_ENABLE_RSFECOPUS
 +
    return true;
  }
  
-+#ifdef RS_FEC
++#ifdef WEBRTC_ENABLE_RSFECOPUS
 +int32_t RTPSenderAudio::SetRsPara(uint8_t n) {
 +	rs_encoder_->SetN(n);
 +	return 0;
@@ -2159,46 +2182,62 @@ index b826c30e07ba342e012bbeeba22040f0cc636f7d..e6165d76095b8840109e642c36fda24a
 +bool RTPSenderAudio::GetRsStatus() const {
 +	return rs_encoder_->GetFECStatus();
 +}
-+#endif // RS_FEC
++#endif // WEBRTC_ENABLE_RSFECOPUS
 +
  // Send a TelephoneEvent tone using RFC 2833 (4733)
  int32_t RTPSenderAudio::SendTelephoneEvent(uint8_t key,
                                             uint16_t time_ms,
 diff --git a/modules/rtp_rtcp/source/rtp_sender_audio.h b/modules/rtp_rtcp/source/rtp_sender_audio.h
-index 662f908216e8f18de6036ce5d79cfe0807ba0dcf..f3e397063f79dcfea3d4fb9d13e4eddc70d7cb56 100644
+index 662f908216e8f18de6036ce5d79cfe0807ba0dcf..d7d96febce1ed3cca0f5e41ee5bc43beda34dd64 100644
 --- a/modules/rtp_rtcp/source/rtp_sender_audio.h
 +++ b/modules/rtp_rtcp/source/rtp_sender_audio.h
-@@ -21,6 +21,7 @@
+@@ -21,6 +21,9 @@
  #include "modules/rtp_rtcp/source/absolute_capture_time_sender.h"
  #include "modules/rtp_rtcp/source/dtmf_queue.h"
  #include "modules/rtp_rtcp/source/rtp_sender.h"
++#ifdef WEBRTC_ENABLE_RSFECOPUS
 +#include "modules/rtp_rtcp/source/rs_fec.h"
++#endif // WEBRTC_ENABLE_RSFECOPUS
  #include "rtc_base/one_time_event.h"
  #include "rtc_base/synchronization/mutex.h"
  #include "rtc_base/thread_annotations.h"
-@@ -67,6 +68,14 @@ class RTPSenderAudio {
+@@ -67,6 +70,14 @@ class RTPSenderAudio {
    // Send a DTMF tone using RFC 2833 (4733)
    int32_t SendTelephoneEvent(uint8_t key, uint16_t time_ms, uint8_t level);
  
-+#ifdef RS_FEC
++#ifdef WEBRTC_ENABLE_RSFECOPUS
 +  int32_t SetRsPara(uint8_t n);
 +
 +  int32_t SetRsStatus(bool enable);
 +
 +  bool GetRsStatus() const;
-+#endif // RS_FEC
++#endif // WEBRTC_ENABLE_RSFECOPUS
 +
   protected:
    bool SendTelephoneEventPacket(
        bool ended,
-@@ -82,6 +91,10 @@ class RTPSenderAudio {
+@@ -82,6 +93,10 @@ class RTPSenderAudio {
  
    Mutex send_audio_mutex_;
  
-+#ifdef RS_FEC
++#ifdef WEBRTC_ENABLE_RSFECOPUS
 +  RsFecEncoder* rs_encoder_;
-+#endif // RS_FEC
++#endif // WEBRTC_ENABLE_RSFECOPUS
 +
    // DTMF.
    bool dtmf_event_is_on_ = false;
    bool dtmf_event_first_packet_sent_ = false;
+diff --git a/webrtc.gni b/webrtc.gni
+index 173d66c7910dfea708b53444d8a4348a20329609..d93fca30a260a4f9d35cd3080e4cc285f0874324 100644
+--- a/webrtc.gni
++++ b/webrtc.gni
+@@ -189,6 +189,9 @@ declare_args() {
+   rtc_use_h264 =
+       proprietary_codecs && !is_android && !is_ios && !(is_win && !is_clang)
+ 
++  # rsfecopus 音频编码器开关，默认在mac和Windows上开启
++  rtc_enable_rsfecopus = is_win || is_mac
++
+   # Enable to use H265
+   rtc_use_h265 = proprietary_codecs
+ 
