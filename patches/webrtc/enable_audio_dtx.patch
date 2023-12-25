@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Mon, 25 Dec 2023 16:02:38 +0800
+Subject: Enable audio DTX
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+开启音频DTX
+
+diff --git a/audio/channel_send.cc b/audio/channel_send.cc
+index 69edda24e8636602b547a20ec77dba4501f05925..37e56b9320c9ee10ac556e92a140c2844e0e09ee 100644
+--- a/audio/channel_send.cc
++++ b/audio/channel_send.cc
+@@ -462,6 +462,12 @@ void ChannelSend::StartSend() {
+   int ret = rtp_rtcp_->SetSendingStatus(true);
+   RTC_DCHECK_EQ(0, ret);
+ 
++  audio_coding_->ModifyEncoder([&](std::unique_ptr<AudioEncoder>* encoder) {
++    if(*encoder) {
++      (*encoder)->SetDtx(true);
++    }
++  });
++
+   // It is now OK to start processing on the encoder task queue.
+   first_frame_.store(true);
+   encoder_queue_is_active_.store(true);

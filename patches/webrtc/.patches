@@ -9,3 +9,4 @@ modify_webrtc_nack_parameters.patch
 support_and_enable_rsfecopus.patch
 support_and_enable_howling_suppression.patch
 support_and_enable_rnnoise.patch
+enable_audio_dtx.patch
