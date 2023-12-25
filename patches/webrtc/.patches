@@ -8,3 +8,4 @@ enable_cabac_in_h264_encoder.patch
 modify_webrtc_nack_parameters.patch
 support_and_enable_rsfecopus.patch
 support_and_enable_howling_suppression.patch
+support_and_enable_rnnoise.patch
