@@ -1,0 +1,126 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Tue, 26 Dec 2023 18:00:33 +0800
+Subject: Optimize AEC
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+AEC延时估计稳定性修改
+
+diff --git a/modules/audio_processing/aec3/echo_remover.cc b/modules/audio_processing/aec3/echo_remover.cc
+index 673d88af0377b94693323500965c26eca1604a82..953d067f443a0a9e927ce9909eb43adee0d835d7 100644
+--- a/modules/audio_processing/aec3/echo_remover.cc
++++ b/modules/audio_processing/aec3/echo_remover.cc
+@@ -343,6 +343,14 @@ void EchoRemoverImpl::ProcessCapture(
+       }
+     }
+ 
++    int change_code = (int)echo_path_variability.delay_change;
++    if (echo_path_variability.gain_change) {
++      change_code = 3;
++    }
++    RTC_LOG(LS_ERROR)
++      << "handle echo path change maybe lead echo leakage with code "
++      << change_code;
++
+     subtractor_.HandleEchoPathChange(echo_path_variability);
+     aec_state_.HandleEchoPathChange(echo_path_variability);
+ 
+diff --git a/modules/audio_processing/aec3/render_delay_buffer.cc b/modules/audio_processing/aec3/render_delay_buffer.cc
+index ca77a582fa103395efd7363866d86748e536febc..ee7bbe563603b011a24b6f58fde04191195f71bd 100644
+--- a/modules/audio_processing/aec3/render_delay_buffer.cc
++++ b/modules/audio_processing/aec3/render_delay_buffer.cc
+@@ -99,6 +99,11 @@ class RenderDelayBufferImpl final : public RenderDelayBuffer {
+   bool external_audio_buffer_delay_verified_after_reset_ = false;
+   size_t min_latency_blocks_ = 0;
+   size_t excess_render_detection_counter_ = 0;
++  std::array<int, 10> delay_change_diff_;
++  size_t delay_change_diff_index_ = 0;
++  std::array<int, 250> external_delay_history_;
++  size_t external_delay_history_index_ = 0;
++  size_t external_delay_set_times_ = 0;
+ 
+   int MapDelayToTotalDelay(size_t delay) const;
+   int ComputeDelay() const;
+@@ -195,6 +200,11 @@ void RenderDelayBufferImpl::Reset() {
+     // Unset the delays which are set by AlignFromDelay.
+     delay_ = absl::nullopt;
+   }
++  delay_change_diff_.fill(0);
++  delay_change_diff_index_ = 0;
++  external_delay_history_.fill(0);
++  external_delay_history_index_ = 0;
++  external_delay_set_times_ = 0;
+ }
+ 
+ // Inserts a new block into the render buffers.
+@@ -316,7 +326,27 @@ bool RenderDelayBufferImpl::AlignFromDelay(size_t delay) {
+   if (delay_ && *delay_ == delay) {
+     return false;
+   }
++  int diff = delay >= *delay_ ? (int)(delay - *delay_) : -(int)(*delay_ - delay);
+   delay_ = delay;
++  delay_change_diff_[delay_change_diff_index_] = diff;
++  delay_change_diff_index_ = (delay_change_diff_index_ + 1) % delay_change_diff_.size();
++  int totalDiff = std::accumulate(delay_change_diff_.begin(), delay_change_diff_.end(), 0);
++  if ((diff <= 4 && diff >= -4) && (totalDiff <= 2 && totalDiff >= -2)) {
++    RTC_LOG(LS_ERROR) << "delay changed in handle";
++    return false;
++  }
++
++  if (external_delay_set_times_ > external_delay_history_.size()) {
++    int meanExternalDelay = std::accumulate(external_delay_history_.begin(), external_delay_history_.end(), 0) / external_delay_history_.size();
++    int varyTimes = 0;
++    std::for_each(external_delay_history_.begin(), external_delay_history_.end(),
++                  [meanExternalDelay, &varyTimes](int a)
++                  { varyTimes += (a > 2 * meanExternalDelay || a < meanExternalDelay / 2) ? 1 : 0; });
++
++    if (varyTimes > 10) {
++      RTC_LOG(LS_ERROR) << "audio system delay in unstable state";
++    }
++  }
+ 
+   // Compute the total delay and limit the delay to the allowed range.
+   int total_delay = MapDelayToTotalDelay(*delay_);
+@@ -337,6 +367,14 @@ void RenderDelayBufferImpl::SetAudioBufferDelay(int delay_ms) {
+ 
+   // Convert delay from milliseconds to blocks (rounded down).
+   external_audio_buffer_delay_ = delay_ms / 4;
++  external_delay_history_[external_delay_history_index_] = *external_audio_buffer_delay_;
++  external_delay_history_index_ = (external_delay_history_index_ + 1) % external_delay_history_.size();
++  external_delay_set_times_++;
++  if (external_delay_set_times_ % 250 == 0) {
++    int external_delay_observe =
++        std::accumulate(external_delay_history_.begin(), external_delay_history_.end(), 0) / external_delay_history_.size();
++    RTC_LOG(LS_ERROR) << "audio device report latency = " << external_delay_observe << " ms";
++  }
+ }
+ 
+ bool RenderDelayBufferImpl::HasReceivedBufferDelay() {
+diff --git a/modules/audio_processing/audio_processing_impl.cc b/modules/audio_processing/audio_processing_impl.cc
+index b5f9dee9b18d4b3033401ed4225be42b9b3fa680..fb273883fac5fc9c90dfef4722fd88980bd3efab 100644
+--- a/modules/audio_processing/audio_processing_impl.cc
++++ b/modules/audio_processing/audio_processing_impl.cc
+@@ -1572,6 +1572,10 @@ int AudioProcessingImpl::ProcessCaptureStreamLocked() {
+                                 levels.average, 1, RmsLevel::kMinLevelDb, 64);
+     RTC_HISTOGRAM_COUNTS_LINEAR("WebRTC.Audio.ApmCaptureInputLevelPeakRms",
+                                 levels.peak, 1, RmsLevel::kMinLevelDb, 64);
++    RTC_LOG(LS_INFO) << "Apm input rms = "
++                      << levels.average
++                      << ", peak = "
++                      << levels.peak;
+   }
+ 
+   if (capture_.applied_input_volume.has_value()) {
+@@ -1814,6 +1818,10 @@ int AudioProcessingImpl::ProcessCaptureStreamLocked() {
+           RmsLevel::kMinLevelDb, 64);
+       RTC_HISTOGRAM_COUNTS_LINEAR("WebRTC.Audio.ApmCaptureOutputLevelPeakRms",
+                                   levels.peak, 1, RmsLevel::kMinLevelDb, 64);
++      RTC_LOG(LS_INFO) << "Apm output rms = "
++                        << levels.average
++                        << ", peak = "
++                        << levels.peak;
+     }
+ 
+     // Compute echo-detector stats.
