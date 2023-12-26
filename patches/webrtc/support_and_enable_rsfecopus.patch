@@ -325,7 +325,7 @@ index 0fc9931f3985079c92440e5a761fc680a010cb6f..1bda72cced85d066af04e65497739d6d
    } else {
 diff --git a/modules/rtp_rtcp/source/rs_fec.cc b/modules/rtp_rtcp/source/rs_fec.cc
 new file mode 100644
-index 0000000000000000000000000000000000000000..4d3efb57407b183bbfdb70b5d1ea21df1185222a
+index 0000000000000000000000000000000000000000..e8460db55f8e32e7f376f4e237937e55cffb7da1
 --- /dev/null
 +++ b/modules/rtp_rtcp/source/rs_fec.cc
 @@ -0,0 +1,1541 @@
@@ -1630,8 +1630,8 @@ index 0000000000000000000000000000000000000000..4d3efb57407b183bbfdb70b5d1ea21df
 +						}
 +					}
 +
-+	    			if(!dec_para_[i]->is_decoded && need_decode)
-+	    			{
++					if(!dec_para_[i]->is_decoded && need_decode)
++					{
 +						if(fec_decode(GetEncodeMat(dec_para_[i]->n), dec_para_[i]->n, FEC_K, pkg_list_[i], pkg_index_[i], dec_para_[i]->size)== 0)
 +						{
 +							dec_para_[i]->is_decoded = true;
@@ -1700,7 +1700,7 @@ index 0000000000000000000000000000000000000000..4d3efb57407b183bbfdb70b5d1ea21df
 +					pkg_list_[i][dec_para_[i]->pkg_num] = new uint8_t[MAX_PAYLOAD_SIZE];
 +					if(id<FEC_K)
 +					{
-+    				    uint8_t *pbuf = pkg_list_[i][dec_para_[i]->pkg_num];
++						uint8_t *pbuf = pkg_list_[i][dec_para_[i]->pkg_num];
 +				        pbuf[0] = buf_size>>8;
 +				        pbuf[1] = buf_size&0xff;
 +				        pbuf += 2;
