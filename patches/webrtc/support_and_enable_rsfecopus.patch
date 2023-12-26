@@ -2022,7 +2022,7 @@ index 0000000000000000000000000000000000000000..b1dff7d9f93138144a84065202085627
 +
 +#endif
 diff --git a/modules/rtp_rtcp/source/rtp_sender_audio.cc b/modules/rtp_rtcp/source/rtp_sender_audio.cc
-index b826c30e07ba342e012bbeeba22040f0cc636f7d..08cd28408d2622cacbdac6ad71ca6afd0ae81776 100644
+index b826c30e07ba342e012bbeeba22040f0cc636f7d..6aefc053e3fbe5808a4c3f4bf63677a9198d5fc1 100644
 --- a/modules/rtp_rtcp/source/rtp_sender_audio.cc
 +++ b/modules/rtp_rtcp/source/rtp_sender_audio.cc
 @@ -56,9 +56,22 @@ RTPSenderAudio::RTPSenderAudio(Clock* clock, RTPSender* rtp_sender)
@@ -2125,7 +2125,7 @@ index b826c30e07ba342e012bbeeba22040f0cc636f7d..08cd28408d2622cacbdac6ad71ca6afd
 +      packet_red->SetTimestamp(frame.rtp_timestamp);
 +      packet_red->set_capture_time(clock_->CurrentTime());
 +      // Update audio level extension, if included.
-+      packet->SetExtension<AudioLevel>(
++      packet_red->SetExtension<AudioLevel>(
 +          frame.type == AudioFrameType::kAudioFrameSpeech,
 +          frame.audio_level_dbov.value_or(127));
 +
