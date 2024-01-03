@@ -2212,10 +2212,10 @@ dotenv@^4.0.0:
   resolved "https://registry.yarnpkg.com/dotenv/-/dotenv-4.0.0.tgz#864ef1379aced55ce6f95debecdce179f7a0cd1d"
   integrity sha1-hk7xN5rO1Vzm+V3r7NzhefegzR0=
 
-dugite@^2.4.0:
-  version "2.5.1"
-  resolved "https://registry.yarnpkg.com/dugite/-/dugite-2.5.1.tgz#6ab808ebf321809edf42d974e62eea9c9e256722"
-  integrity sha512-9OjUguynzq8v3GSmp01kbVcMmErc65ZZ0OssO/0PM2RyhD8Dzb8cCuy3z72+IxLwPwNi754jZ0FtMLAFA3D0qA==
+dugite@2.4.0:
+  version "2.4.0"
+  resolved "https://registry.yarnpkg.com/dugite/-/dugite-2.4.0.tgz#e268f694d46a03e948b27ea0ecfba854d4eec82d"
+  integrity sha512-C1IBvp0EcrqsSR3fa7cAGMxlVNmamSA7fyYvbdBCGtw2mTq9wKalPUSLYoYzGuwKDJUkv70yQBu53eQ/iZKIUg==
   dependencies:
     progress "^2.0.3"
     tar "^6.1.11"
