@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dragon-S <15919917852@163.com>
+Date: Fri, 5 Jan 2024 15:37:36 +0800
+Subject: Windows shared system sound problem
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+解决共享系统声音时回声问题，但是开启回音消除后，在双讲环境下对共享声音有损伤
+
+diff --git a/third_party/blink/renderer/modules/mediastream/user_media_processor.cc b/third_party/blink/renderer/modules/mediastream/user_media_processor.cc
+index a4759de78333016e9516b58c23ca77efe0a917c8..8712c3a5cd40fcd2cd8c622766e98e0fbdcab89b 100644
+--- a/third_party/blink/renderer/modules/mediastream/user_media_processor.cc
++++ b/third_party/blink/renderer/modules/mediastream/user_media_processor.cc
+@@ -1540,7 +1540,9 @@ UserMediaProcessor::CreateAudioSource(
+   blink::AudioProcessingProperties audio_processing_properties =
+       current_request_info_->audio_capture_settings()
+           .audio_processing_properties();
+-  if (blink::IsScreenCaptureMediaType(device.type) ||
++  // FIXME:解决共享系统声音时回声问题，但是开启回音消除后，在双讲环境下对共享声音有损伤
++  // 此修改只对Windows有效，因为Mac共享的系统声音来自虚拟声卡device.type永远都不会是屏幕
++  if (/*blink::IsScreenCaptureMediaType(device.type) ||*/
+       !blink::MediaStreamAudioProcessor::WouldModifyAudio(
+           audio_processing_properties)) {
+     SendLogMessage(

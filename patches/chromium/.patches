@@ -144,3 +144,4 @@ supports_getting_bounds_of_shared_windows.patch
 windows_support_isentirelycovered.patch
 get_minimized_state_of_shared_window.patch
 sharing_the_playing_wps_ppt_on_mac.patch
+windows_shared_system_sound_problem.patch
