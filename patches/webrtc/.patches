@@ -14,3 +14,4 @@ optimize_aec.patch
 aec_dual_speaker_optimization.patch
 shared_wps_shows_black.patch
 win10_shared_powerpoint_bug.patch
+cannot_capture_the_window_of_the_current_process.patch

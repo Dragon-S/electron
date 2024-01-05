@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dragon-S <15919917852@163.com>
+Date: Fri, 5 Jan 2024 11:48:37 +0800
+Subject: Cannot capture the window of the current process
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+不能捕获当前进程的窗口
+
+diff --git a/modules/desktop_capture/win/window_capture_utils.cc b/modules/desktop_capture/win/window_capture_utils.cc
+index ccfef49bc534dcb1c098da33104b18cb407214e5..a07e45be0b7fa88e65d39310eb829575d7fbbbe7 100644
+--- a/modules/desktop_capture/win/window_capture_utils.cc
++++ b/modules/desktop_capture/win/window_capture_utils.cc
+@@ -43,11 +43,12 @@ struct GetWindowListParams {
+   DesktopCapturer::SourceList* const result;
+ };
+ 
+-bool IsWindowOwnedByCurrentProcess(HWND hwnd) {
+-  DWORD process_id;
+-  GetWindowThreadProcessId(hwnd, &process_id);
+-  return process_id == GetCurrentProcessId();
+-}
++// TODO:解决未使用函数警告，需要使用时再打开
++// bool IsWindowOwnedByCurrentProcess(HWND hwnd) {
++//   DWORD process_id;
++//   GetWindowThreadProcessId(hwnd, &process_id);
++//   return process_id == GetCurrentProcessId();
++// }
+ 
+ BOOL CALLBACK GetWindowListHandler(HWND hwnd, LPARAM param) {
+   GetWindowListParams* params = reinterpret_cast<GetWindowListParams*>(param);
+@@ -72,6 +73,12 @@ BOOL CALLBACK GetWindowListHandler(HWND hwnd, LPARAM param) {
+     return TRUE;
+   }
+ 
++  //FIXME:目前还没弄清楚为什么加了这个就可以获取到当前进程的窗口了
++  // Skip untitled window if ignoreUntitled specified
++  if (params->ignore_untitled && GetWindowTextLength(hwnd) == 0) {
++    return TRUE;
++  }
++
+   if (params->ignore_unresponsive && !IsWindowResponding(hwnd)) {
+     return TRUE;
+   }
+@@ -89,10 +96,12 @@ BOOL CALLBACK GetWindowListHandler(HWND hwnd, LPARAM param) {
+   // windows owned by the current process. Consumers should either ensure that
+   // the thread running their message loop never waits on this operation, or use
+   // the option to exclude these windows from the source list.
+-  bool owned_by_current_process = IsWindowOwnedByCurrentProcess(hwnd);
+-  if (owned_by_current_process && params->ignore_current_process_windows) {
+-    return TRUE;
+-  }
++  // 因会议本地录制功能需要录制会议窗口因此需要去掉此判断条件
++  bool owned_by_current_process = true;
++  // bool owned_by_current_process = IsWindowOwnedByCurrentProcess(hwnd);
++  // if (owned_by_current_process && params->ignore_current_process_windows) {
++  //   return TRUE;
++  // }
+ 
+   // Even if consumers request to enumerate windows owned by the current
+   // process, we should not call GetWindowText* on unresponsive windows owned by
