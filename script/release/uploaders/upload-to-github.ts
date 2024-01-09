@@ -63,7 +63,7 @@ function uploadToGitHub () {
       retry++;
 
       octokit.repos.listReleaseAssets({
-        owner: 'electron',
+        owner: 'Dragon-S',
         repo: targetRepo,
         release_id: releaseId,
         per_page: 100
@@ -75,7 +75,7 @@ function uploadToGitHub () {
         if (existingAssets.length > 0) {
           console.log(`${fileName} already exists; will delete before retrying upload.`);
           octokit.repos.deleteReleaseAsset({
-            owner: 'electron',
+            owner: 'Dragon-S',
             repo: targetRepo,
             asset_id: existingAssets[0].id
           }).catch((deleteErr) => {
