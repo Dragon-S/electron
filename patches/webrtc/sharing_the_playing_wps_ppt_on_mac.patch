@@ -1,0 +1,129 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Wed, 20 Dec 2023 16:17:10 +0800
+Subject: sharing the playing wps ppt on mac
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Mac 12.3一下系统共享WPS ppt, 远端画面不动
+
+diff --git a/modules/desktop_capture/mac/desktop_configuration.h b/modules/desktop_capture/mac/desktop_configuration.h
+index 2ad5474e444f4d760c7bcc7f56d333e2aec1f314..70a15e9a9eac4f3547583639e74032d5182cd621 100644
+--- a/modules/desktop_capture/mac/desktop_configuration.h
++++ b/modules/desktop_capture/mac/desktop_configuration.h
+@@ -44,6 +44,8 @@ struct MacDisplayConfiguration {
+ 
+   // Display type, built-in or external.
+   bool is_builtin;
++
++  float notch_hight = 0.0f;
+ };
+ 
+ typedef std::vector<MacDisplayConfiguration> MacDisplayConfigurations;
+diff --git a/modules/desktop_capture/mac/desktop_configuration.mm b/modules/desktop_capture/mac/desktop_configuration.mm
+index 93fb3f622652818096a5b54a16fe72a75c5ccf8b..d9018b1a63b9cdc1a21943fa85897dce219bd61e 100644
+--- a/modules/desktop_capture/mac/desktop_configuration.mm
++++ b/modules/desktop_capture/mac/desktop_configuration.mm
+@@ -74,6 +74,11 @@ MacDisplayConfiguration GetConfigurationForScreen(NSScreen* screen) {
+   // Determine if the display is built-in or external.
+   display_config.is_builtin = CGDisplayIsBuiltin(display_config.id);
+ 
++  //12.0以上系统，获取刘海高度
++  if (@available(macOS 12, *)) {
++    display_config.notch_hight = [screen safeAreaInsets].top;
++  }
++
+   return display_config;
+ }
+ 
+diff --git a/modules/desktop_capture/mac/full_screen_mac_application_handler.cc b/modules/desktop_capture/mac/full_screen_mac_application_handler.cc
+index 45cd3223d29075ae513eecf21d2637b14e9a1771..f56dc9689ab27c6c83a046bbd13ac5d1a9bfdfbb 100644
+--- a/modules/desktop_capture/mac/full_screen_mac_application_handler.cc
++++ b/modules/desktop_capture/mac/full_screen_mac_application_handler.cc
+@@ -201,6 +201,52 @@ class OpenOfficeApplicationHandler : public FullScreenMacApplicationHandler {
+   }
+ };
+ 
++class WPSOfficeApplicationHandler : public FullScreenMacApplicationHandler {
++ public:
++  WPSOfficeApplicationHandler(DesktopCapturer::SourceId sourceId)
++      : FullScreenMacApplicationHandler(sourceId, nullptr, false) {}
++
++  DesktopCapturer::SourceId FindFullScreenWindow(
++      const DesktopCapturer::SourceList& source_list,
++      int64_t timestamp) const override {
++    InvalidateCacheIfNeeded(source_list, timestamp,
++                            [&](const DesktopCapturer::Source& src) {
++                              return GetWindowOwnerPid(src.id) == owner_pid_;
++                            });
++
++    const auto original_window = GetSourceId();
++    const std::string original_title = GetWindowTitle(original_window);
++
++    // Check if we have only one document window, otherwise it's not possible
++    // to securely match a document window and a slide show window which has
++    // empty title.
++    if (std::any_of(cache_sources_.begin(), cache_sources_.end(),
++                    [&original_title](const DesktopCapturer::Source& src) {
++                      return src.title.length() && src.title != original_title;
++                    })) {
++      return kCGNullWindowID;
++    }
++
++    MacDesktopConfiguration desktop_config =
++        MacDesktopConfiguration::GetCurrent(
++            MacDesktopConfiguration::TopLeftOrigin);
++
++    // Looking for slide show window,
++    // it must be a full screen window with empty title
++    const auto slide_show_window = std::find_if(
++        cache_sources_.begin(), cache_sources_.end(), [&](const auto& src) {
++          return src.title.empty() &&
++                 IsWindowFullScreen(desktop_config, src.id);
++        });
++
++    if (slide_show_window == cache_sources_.end()) {
++      return kCGNullWindowID;
++    }
++
++    return slide_show_window->id;
++  }
++};
++
+ }  // namespace
+ 
+ std::unique_ptr<FullScreenApplicationHandler>
+@@ -224,6 +270,8 @@ CreateFullScreenMacApplicationHandler(DesktopCapturer::SourceId sourceId) {
+       predicate = equal_title_predicate;
+     } else if (owner_name == "OpenOffice") {
+       return std::make_unique<OpenOfficeApplicationHandler>(sourceId);
++    } else if (owner_name == "WPS Office") {
++      return std::make_unique<WPSOfficeApplicationHandler>(sourceId);
+     }
+ 
+     if (predicate) {
+diff --git a/modules/desktop_capture/mac/window_list_utils.cc b/modules/desktop_capture/mac/window_list_utils.cc
+index 5d881662ea2f2d86d2c33bf20f79d31ef4e7a481..e9b84a7e87a9dc1b69e7be7f5d1c9d2a05242e47 100644
+--- a/modules/desktop_capture/mac/window_list_utils.cc
++++ b/modules/desktop_capture/mac/window_list_utils.cc
+@@ -248,9 +248,18 @@ bool IsWindowFullScreen(const MacDesktopConfiguration& desktop_config,
+     for (MacDisplayConfigurations::const_iterator it =
+              desktop_config.displays.begin();
+          it != desktop_config.displays.end(); it++) {
++      //正常的notch_hight = 32，但是wps的是37
++      float notch_hight = it->notch_hight;
++      const std::string owner_name = GetWindowOwnerName(window);
++      if (owner_name.find("WPS Office") == 0) {
++        notch_hight += 5.0;
++      }
+       if (it->bounds.equals(
+               DesktopRect::MakeXYWH(bounds.origin.x, bounds.origin.y,
+-                                    bounds.size.width, bounds.size.height))) {
++                                    bounds.size.width, bounds.size.height)) ||
++          (notch_hight != 0.0 && it->bounds.equals(
++              DesktopRect::MakeXYWH(bounds.origin.x, bounds.origin.y - notch_hight,
++                                    bounds.size.width, bounds.size.height + notch_hight)))) {
+         fullscreen = true;
+         break;
+       }

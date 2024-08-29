@@ -1069,6 +1069,7 @@ image2.resize({ quality: 'bad' });
 
 console.log(process.versions.electron);
 console.log(process.versions.chrome);
+console.log(process.versions.myElectron);
 console.log(process.type);
 console.log(process.resourcesPath);
 console.log(process.mas);

@@ -1,0 +1,1679 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Fri, 22 Dec 2023 17:53:43 +0800
+Subject: Support and enable howling suppression
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+支持啸叫抑制功能,在Windows和mac上默认开启
+
+diff --git a/BUILD.gn b/BUILD.gn
+index 35f067085b49c385ecd70b728fed8bc459973cd8..f2a1abc99d4ec13ecda029a0b12c85d4a69cbbf4 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -326,6 +326,10 @@ config("common_config") {
+     defines += [ "WEBRTC_ENABLE_RSFECOPUS" ]
+   }
+ 
++  if (rtc_enable_audio_processing_hs) {
++    defines += [ "WEBRTC_ENABLE_HS" ]
++  }
++
+   if (rtc_use_absl_mutex) {
+     defines += [ "WEBRTC_ABSL_MUTEX" ]
+   }
+diff --git a/api/audio_options.cc b/api/audio_options.cc
+index a3f2b6e887177575dcd823c0c24d02f36a81e6b2..7dd603d701309d9ece845bb62bfaeb34863b54fa 100644
+--- a/api/audio_options.cc
++++ b/api/audio_options.cc
+@@ -43,6 +43,9 @@ void AudioOptions::SetAll(const AudioOptions& change) {
+   SetFrom(&ios_force_software_aec_HACK, change.ios_force_software_aec_HACK);
+ #endif
+   SetFrom(&auto_gain_control, change.auto_gain_control);
++#ifdef WEBRTC_ENABLE_HS
++  SetFrom(&howling_suppression, change.howling_suppression);
++#endif // WEBRTC_ENABLE_HS
+   SetFrom(&noise_suppression, change.noise_suppression);
+   SetFrom(&highpass_filter, change.highpass_filter);
+   SetFrom(&stereo_swapping, change.stereo_swapping);
+@@ -63,6 +66,9 @@ bool AudioOptions::operator==(const AudioOptions& o) const {
+          ios_force_software_aec_HACK == o.ios_force_software_aec_HACK &&
+ #endif
+          auto_gain_control == o.auto_gain_control &&
++#ifdef WEBRTC_ENABLE_HS
++         howling_suppression == o.howling_suppression &&
++#endif // WEBRTC_ENABLE_HS
+          noise_suppression == o.noise_suppression &&
+          highpass_filter == o.highpass_filter &&
+          stereo_swapping == o.stereo_swapping &&
+@@ -87,6 +93,9 @@ std::string AudioOptions::ToString() const {
+ #endif
+   ToStringIfSet(&result, "agc", auto_gain_control);
+   ToStringIfSet(&result, "ns", noise_suppression);
++#ifdef WEBRTC_ENABLE_HS
++  ToStringIfSet(&result, "hs", howling_suppression);
++#endif // WEBRTC_ENABLE_HS
+   ToStringIfSet(&result, "hf", highpass_filter);
+   ToStringIfSet(&result, "swap", stereo_swapping);
+   ToStringIfSet(&result, "audio_jitter_buffer_max_packets",
+diff --git a/api/audio_options.h b/api/audio_options.h
+index 3ab3b3c98ce2ba82dcb536251f2b2499a803a56e..4498d54eb401a240fad377149db6a36c243c43df 100644
+--- a/api/audio_options.h
++++ b/api/audio_options.h
+@@ -48,6 +48,10 @@ struct RTC_EXPORT AudioOptions {
+   absl::optional<bool> auto_gain_control;
+   // Audio processing to filter out background noise.
+   absl::optional<bool> noise_suppression;
++#ifdef WEBRTC_ENABLE_HS
++  // Audio processing to remove howling noise
++  absl::optional<bool> howling_suppression;
++#endif // WEBRTC_ENABLE_HS
+   // Audio processing to remove background noise of lower frequencies.
+   absl::optional<bool> highpass_filter;
+   // Audio processing to swap the left and right channels.
+diff --git a/media/engine/webrtc_voice_engine.cc b/media/engine/webrtc_voice_engine.cc
+index adf8b5c51d3b3cbe7635a334bfa6844d9373d9be..72c3ad83cad8c048a60f52bec96a06137109b6f4 100644
+--- a/media/engine/webrtc_voice_engine.cc
++++ b/media/engine/webrtc_voice_engine.cc
+@@ -448,6 +448,9 @@ void WebRtcVoiceEngine::Init() {
+ #else
+     options.noise_suppression = true;
+ #endif
++#ifdef WEBRTC_ENABLE_HS
++    options.howling_suppression = true;
++#endif  // WEBRTC_ENABLE_HS
+     options.highpass_filter = true;
+     options.stereo_swapping = false;
+     options.audio_jitter_buffer_max_packets = 200;
+@@ -639,6 +642,13 @@ void WebRtcVoiceEngine::ApplyOptions(const AudioOptions& options_in) {
+         webrtc::AudioProcessing::Config::NoiseSuppression::Level::kHigh;
+   }
+ 
++#ifdef WEBRTC_ENABLE_HS
++  if (options.howling_suppression) {
++    RTC_LOG(LS_INFO) << "Howling suppression is enabled";
++    apm_config.howling_suppression.enabled = true;
++  }
++#endif // WEBRTC_ENABLE_HS
++
+   ap->ApplyConfig(apm_config);
+ }
+ 
+diff --git a/modules/audio_processing/BUILD.gn b/modules/audio_processing/BUILD.gn
+index 2b81427da90d7333bbeb37e93877ba6ecd33cd28..dbc6409967103b054d8606714b4b1382d60dc132 100644
+--- a/modules/audio_processing/BUILD.gn
++++ b/modules/audio_processing/BUILD.gn
+@@ -216,6 +216,11 @@ rtc_library("audio_processing") {
+     "transient:transient_suppressor_api",
+     "vad",
+   ]
++
++  if (rtc_enable_audio_processing_hs) {
++    deps += ["hs"]
++  }
++
+   absl_deps = [
+     "//third_party/abseil-cpp/absl/strings",
+     "//third_party/abseil-cpp/absl/types:optional",
+diff --git a/modules/audio_processing/audio_processing_impl.cc b/modules/audio_processing/audio_processing_impl.cc
+index c80cc76a3d8294448bd30a966e1527eae35f340e..a8753f6df30d3c746135df21f81726e843fd6174 100644
+--- a/modules/audio_processing/audio_processing_impl.cc
++++ b/modules/audio_processing/audio_processing_impl.cc
+@@ -564,7 +564,12 @@ bool AudioProcessingImpl::SubmoduleStates::Update(
+     bool voice_activity_detector_enabled,
+     bool gain_adjustment_enabled,
+     bool echo_controller_enabled,
+-    bool transient_suppressor_enabled) {
++    bool transient_suppressor_enabled
++#ifdef WEBRTC_ENABLE_HS
++    ,
++    bool howling_suppressor_enabled
++#endif // WEBRTC_ENABLE_HS
++    ) {
+   bool changed = false;
+   changed |= (high_pass_filter_enabled != high_pass_filter_enabled_);
+   changed |=
+@@ -578,6 +583,9 @@ bool AudioProcessingImpl::SubmoduleStates::Update(
+   changed |= (gain_adjustment_enabled != gain_adjustment_enabled_);
+   changed |= (echo_controller_enabled != echo_controller_enabled_);
+   changed |= (transient_suppressor_enabled != transient_suppressor_enabled_);
++#ifdef WEBRTC_ENABLE_HS
++  changed |= (howling_suppressor_enabled != howling_suppressor_enabled_);
++#endif // WEBRTC_ENABLE_HS
+   if (changed) {
+     high_pass_filter_enabled_ = high_pass_filter_enabled;
+     mobile_echo_controller_enabled_ = mobile_echo_controller_enabled;
+@@ -588,6 +596,9 @@ bool AudioProcessingImpl::SubmoduleStates::Update(
+     gain_adjustment_enabled_ = gain_adjustment_enabled;
+     echo_controller_enabled_ = echo_controller_enabled;
+     transient_suppressor_enabled_ = transient_suppressor_enabled;
++#ifdef WEBRTC_ENABLE_HS
++    howling_suppressor_enabled_ = howling_suppressor_enabled;
++#endif // WEBRTC_ENABLE_HS
+   }
+ 
+   changed |= first_update_;
+@@ -610,7 +621,11 @@ bool AudioProcessingImpl::SubmoduleStates::CaptureMultiBandProcessingActive(
+     bool ec_processing_active) const {
+   return high_pass_filter_enabled_ || mobile_echo_controller_enabled_ ||
+          noise_suppressor_enabled_ || adaptive_gain_controller_enabled_ ||
+-         (echo_controller_enabled_ && ec_processing_active);
++         (echo_controller_enabled_ && ec_processing_active)
++#ifdef WEBRTC_ENABLE_HS
++         || howling_suppressor_enabled_
++#endif // WEBRTC_ENABLE_HS
++         ;
+ }
+ 
+ bool AudioProcessingImpl::SubmoduleStates::CaptureFullBandProcessingActive()
+@@ -813,6 +828,9 @@ void AudioProcessingImpl::InitializeLocked() {
+   InitializeGainController2();
+   InitializeVoiceActivityDetector();
+   InitializeNoiseSuppressor();
++#ifdef WEBRTC_ENABLE_HS
++  InitializeHowlingSuppressor();
++#endif // WEBRTC_ENABLE_HS
+   InitializeAnalyzer();
+   InitializePostProcessor();
+   InitializePreProcessor();
+@@ -939,6 +957,11 @@ void AudioProcessingImpl::ApplyConfig(const AudioProcessing::Config& config) {
+       config_.noise_suppression.level !=
+           adjusted_config.noise_suppression.level;
+ 
++#ifdef WEBRTC_ENABLE_HS
++  const bool hs_config_changed =
++      config_.howling_suppression.enabled != config.howling_suppression.enabled;
++#endif // WEBRTC_ENABLE_HS
++
+   const bool ts_config_changed = config_.transient_suppression.enabled !=
+                                  adjusted_config.transient_suppression.enabled;
+ 
+@@ -989,6 +1012,12 @@ void AudioProcessingImpl::ApplyConfig(const AudioProcessing::Config& config) {
+     InitializeCaptureLevelsAdjuster();
+   }
+ 
++#ifdef WEBRTC_ENABLE_HS
++  if (hs_config_changed) {
++    InitializeHowlingSuppressor();
++  }
++#endif // WEBRTC_ENABLE_HS
++
+   // Reinitialization must happen after all submodule configuration to avoid
+   // additional reinitializations on the next capture / render processing call.
+   if (pipeline_config_changed) {
+@@ -1673,6 +1702,13 @@ int AudioProcessingImpl::ProcessCaptureStreamLocked() {
+         capture_buffer, /*stream_has_echo*/ false));
+   }
+ 
++#ifdef WEBRTC_ENABLE_HS
++  if (submodules_.howling_suppressor) {
++    RETURN_ON_ERR(submodules_.howling_suppressor->ProcessCaptureAudio(
++        capture_buffer));
++  }
++#endif // WEBRTC_ENABLE_HS
++
+   if (submodule_states_.CaptureMultiBandProcessingPresent() &&
+       SampleRateSupportsMultiBand(
+           capture_nonlocked_.capture_processing_format.sample_rate_hz())) {
+@@ -2145,7 +2181,12 @@ bool AudioProcessingImpl::UpdateActiveSubmoduleStates() {
+       !!submodules_.gain_controller2, !!submodules_.voice_activity_detector,
+       config_.pre_amplifier.enabled || config_.capture_level_adjustment.enabled,
+       capture_nonlocked_.echo_controller_enabled,
+-      !!submodules_.transient_suppressor);
++      !!submodules_.transient_suppressor
++#ifdef WEBRTC_ENABLE_HS
++      ,
++      !!submodules_.howling_suppressor
++#endif // WEBRTC_ENABLE_HS
++      );
+ }
+ 
+ void AudioProcessingImpl::InitializeTransientSuppressor() {
+@@ -2453,6 +2494,20 @@ void AudioProcessingImpl::InitializeCaptureLevelsAdjuster() {
+   }
+ }
+ 
++#ifdef WEBRTC_ENABLE_HS
++void AudioProcessingImpl::InitializeHowlingSuppressor() {
++  submodules_.howling_suppressor.reset();
++
++  // I can not find who called applyConfig function
++  // Just force enable hs here
++  // if (config_.howling_suppression.enabled) {
++  submodules_.howling_suppressor = std::make_unique<HowlingSuppressionImpl>();
++  submodules_.howling_suppressor->Enable(true);
++  submodules_.howling_suppressor->Initialize(num_proc_channels(), proc_sample_rate_hz());
++  // }
++}
++#endif // WEBRTC_ENABLE_HS
++
+ void AudioProcessingImpl::InitializeResidualEchoDetector() {
+   if (submodules_.echo_detector) {
+     submodules_.echo_detector->Initialize(
+diff --git a/modules/audio_processing/audio_processing_impl.h b/modules/audio_processing/audio_processing_impl.h
+index fe80e0d9120f59963297786287ac7b01b81b1f11..cfcfce86e058f0bcd58af4f6d85c9dced21e10cc 100644
+--- a/modules/audio_processing/audio_processing_impl.h
++++ b/modules/audio_processing/audio_processing_impl.h
+@@ -39,6 +39,9 @@
+ #include "modules/audio_processing/include/audio_processing_statistics.h"
+ #include "modules/audio_processing/ns/noise_suppressor.h"
+ #include "modules/audio_processing/optionally_built_submodule_creators.h"
++#ifdef WEBRTC_ENABLE_HS
++#include "modules/audio_processing/hs/howling_suppression_impl.h"
++#endif // WEBRTC_ENABLE_HS
+ #include "modules/audio_processing/render_queue_item_verifier.h"
+ #include "modules/audio_processing/rms_level.h"
+ #include "modules/audio_processing/transient/transient_suppressor.h"
+@@ -257,7 +260,12 @@ class AudioProcessingImpl : public AudioProcessing {
+                 bool voice_activity_detector_enabled,
+                 bool gain_adjustment_enabled,
+                 bool echo_controller_enabled,
+-                bool transient_suppressor_enabled);
++                bool transient_suppressor_enabled
++#ifdef WEBRTC_ENABLE_HS
++                ,
++                bool howling_suppresor_enabled
++#endif // WEBRTC_ENABLE_HS
++                );
+     bool CaptureMultiBandSubModulesActive() const;
+     bool CaptureMultiBandProcessingPresent() const;
+     bool CaptureMultiBandProcessingActive(bool ec_processing_active) const;
+@@ -281,6 +289,9 @@ class AudioProcessingImpl : public AudioProcessing {
+     bool gain_adjustment_enabled_ = false;
+     bool echo_controller_enabled_ = false;
+     bool transient_suppressor_enabled_ = false;
++#ifdef WEBRTC_ENABLE_HS
++    bool howling_suppressor_enabled_ = false;
++#endif // WEBRTC_ENABLE_HS
+     bool first_update_ = true;
+   };
+ 
+@@ -330,6 +341,9 @@ class AudioProcessingImpl : public AudioProcessing {
+   void InitializeVoiceActivityDetector()
+       RTC_EXCLUSIVE_LOCKS_REQUIRED(mutex_capture_);
+   void InitializeNoiseSuppressor() RTC_EXCLUSIVE_LOCKS_REQUIRED(mutex_capture_);
++#ifdef WEBRTC_ENABLE_HS
++  void InitializeHowlingSuppressor() RTC_EXCLUSIVE_LOCKS_REQUIRED(mutex_capture_);
++#endif // WEBRTC_ENABLE_HS
+   void InitializeCaptureLevelsAdjuster()
+       RTC_EXCLUSIVE_LOCKS_REQUIRED(mutex_capture_);
+   void InitializePostProcessor() RTC_EXCLUSIVE_LOCKS_REQUIRED(mutex_capture_);
+@@ -453,6 +467,9 @@ class AudioProcessingImpl : public AudioProcessing {
+     std::unique_ptr<EchoControl> echo_controller;
+     std::unique_ptr<EchoControlMobileImpl> echo_control_mobile;
+     std::unique_ptr<NoiseSuppressor> noise_suppressor;
++#ifdef WEBRTC_ENABLE_HS
++    std::unique_ptr<HowlingSuppressionImpl> howling_suppressor;
++#endif // WEBRTC_ENABLE_HS
+     std::unique_ptr<TransientSuppressor> transient_suppressor;
+     std::unique_ptr<CaptureLevelsAdjuster> capture_levels_adjuster;
+   } submodules_;
+diff --git a/modules/audio_processing/hs/BUILD.gn b/modules/audio_processing/hs/BUILD.gn
+new file mode 100644
+index 0000000000000000000000000000000000000000..d337ee0fa83aaae16e0c09046f043fec86c4bc83
+--- /dev/null
++++ b/modules/audio_processing/hs/BUILD.gn
+@@ -0,0 +1,31 @@
++# Copyright (c) 2019 The WebRTC project authors. All Rights Reserved.
++#
++# Use of this source code is governed by a BSD-style license
++# that can be found in the LICENSE file in the root of the source
++# tree. An additional intellectual property rights grant can be found
++# in the file PATENTS.  All contributing project authors may
++# be found in the AUTHORS file in the root of the source tree.
++
++import("../../../webrtc.gni")
++
++rtc_static_library("hs") {
++  visibility = [ "*" ]
++  sources = [
++      "hs_common.h",
++      "hs_fft_1024.h",
++      "hs_fft_1024.cc",
++      "notch_filter.h",
++      "notch_filter.cc",
++      "howling_suppressor.h",
++      "howling_suppressor.cc",
++      "howling_suppression_impl.h",
++      "howling_suppression_impl.cc",
++  ]
++
++  defines = []
++
++  if (rtc_build_with_neon && current_cpu != "arm64") {
++    suppressed_configs += [ "//build/config/compiler:compiler_arm_fpu" ]
++    cflags = [ "-mfpu=neon" ]
++  }
++}
+\ No newline at end of file
+diff --git a/modules/audio_processing/hs/howling_suppression_impl.cc b/modules/audio_processing/hs/howling_suppression_impl.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..c4d07624f0b482f494f862a4b997e98a6af68316
+--- /dev/null
++++ b/modules/audio_processing/hs/howling_suppression_impl.cc
+@@ -0,0 +1,68 @@
++/*
++ *  Copyright (c) 2012 The WebRTC project authors. All Rights Reserved.
++ *
++ *  Use of this source code is governed by a BSD-style license
++ *  that can be found in the LICENSE file in the root of the source
++ *  tree. An additional intellectual property rights grant can be found
++ *  in the file PATENTS.  All contributing project authors may
++ *  be found in the AUTHORS file in the root of the source tree.
++ */
++
++#include "howling_suppression_impl.h"
++
++#include "modules/audio_processing/audio_buffer.h"
++#include "howling_suppressor.h"
++
++
++namespace webrtc {
++
++HowlingSuppressionImpl::HowlingSuppressionImpl() {}
++
++HowlingSuppressionImpl::~HowlingSuppressionImpl() {}
++
++void HowlingSuppressionImpl::Initialize(size_t channels, int sample_rate_hz) {
++  //RTC_DCHECK(sample_rate_hz == 48000);
++  channels_ = channels;
++  sample_rate_hz_ = sample_rate_hz;
++
++  std::vector<std::unique_ptr<HowlingSuppressor> > new_howlingSuppressor;
++  if (enabled_) {
++    new_howlingSuppressor.resize(channels);
++    for (size_t i = 0; i < channels; i++) {
++      new_howlingSuppressor[i].reset(new HowlingSuppressor());
++      new_howlingSuppressor[i]->Enable(enabled_);
++    }
++  }
++  howlingSuppressor_.swap(new_howlingSuppressor);
++}
++
++int HowlingSuppressionImpl::ProcessCaptureAudio(AudioBuffer* audio) {
++  RTC_DCHECK(audio);
++  if (!enabled_) {
++    return AudioProcessing::kNotEnabledError;
++  }
++
++  for (size_t i = 0; i < howlingSuppressor_.size(); i++) {
++      if (audio->num_bands() <= 1) {
++        howlingSuppressor_[i]->Process(audio->split_bands_f(i)[0], nullptr);
++      } else {
++        howlingSuppressor_[i]->Process(audio->split_bands_f(i)[0], audio->split_bands_f(i)[1]);
++      }
++  }
++  return AudioProcessing::kNoError;
++}
++
++int HowlingSuppressionImpl::Enable(bool enable) {
++  if (enabled_ != enable) {
++    enabled_ = enable;
++    Initialize(channels_, sample_rate_hz_);
++  }
++  return AudioProcessing::kNoError;
++}
++
++bool HowlingSuppressionImpl::is_enabled() const {
++  return enabled_;
++}
++
++
++}  // namespace webrtc
+diff --git a/modules/audio_processing/hs/howling_suppression_impl.h b/modules/audio_processing/hs/howling_suppression_impl.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..f10438060fbfb8f61e99d04cc5cec8e226ba51f3
+--- /dev/null
++++ b/modules/audio_processing/hs/howling_suppression_impl.h
+@@ -0,0 +1,45 @@
++/*
++ *  Copyright (c) 2012 The WebRTC project authors. All Rights Reserved.
++ *
++ *  Use of this source code is governed by a BSD-style license
++ *  that can be found in the LICENSE file in the root of the source
++ *  tree. An additional intellectual property rights grant can be found
++ *  in the file PATENTS.  All contributing project authors may
++ *  be found in the AUTHORS file in the root of the source tree.
++ */
++
++#ifndef MODULES_AUDIO_PROCESSING_HOWLING_SUPPRESSION_IMPL_H_
++#define MODULES_AUDIO_PROCESSING_HOWLING_SUPPRESSION_IMPL_H_
++
++#include <memory>
++#include <vector>
++
++#include "modules/audio_processing/include/audio_processing.h"
++#include "howling_suppressor.h"
++
++namespace webrtc {
++
++class AudioFrame;
++
++class HowlingSuppressionImpl {
++ public:
++  explicit HowlingSuppressionImpl();
++  ~HowlingSuppressionImpl();
++
++  // TODO(peah): Fold into ctor, once public API is removed.
++  void Initialize(size_t channels, int sample_rate_hz);
++  int ProcessCaptureAudio(AudioBuffer* audio);
++
++  // pitch shift implementation.
++  int Enable(bool enable);
++  bool is_enabled() const;
++
++ private:
++  bool enabled_ = false;
++  size_t channels_ = 0;
++  int sample_rate_hz_ = 0;
++  std::vector<std::unique_ptr<HowlingSuppressor> > howlingSuppressor_;
++};
++}  // namespace webrtc
++
++#endif  // MODULES_AUDIO_PROCESSING_HOWLING_SUPPRESSION_IMPL_H_
+diff --git a/modules/audio_processing/hs/howling_suppressor.cc b/modules/audio_processing/hs/howling_suppressor.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..04aed5d059d073542779c0df18ba9b508590e316
+--- /dev/null
++++ b/modules/audio_processing/hs/howling_suppressor.cc
+@@ -0,0 +1,377 @@
++/*
++ *  Copyright (c) 2012 The WebRTC project authors. All Rights Reserved.
++ *
++ *  Use of this source code is governed by a BSD-style license
++ *  that can be found in the LICENSE file in the root of the source
++ *  tree. An additional intellectual property rights grant can be found
++ *  in the file PATENTS.  All contributing project authors may
++ *  be found in the AUTHORS file in the root of the source tree.
++ */
++
++#include "howling_suppressor.h"
++#include "hs_fft_1024.h"
++#include "hs_common.h"
++
++#include <algorithm>
++#include <cmath>
++#include <vector>
++#include <iostream>
++
++namespace webrtc {
++
++HowlingSuppressor::HowlingSuppressor() :
++    enabled_(false),
++    fft_(new HsFft1024()) {
++
++    fftData_.resize(kHsFftSize);
++    imagData_.resize(kHsFftSize);
++    realData_.resize(kHsFftSize);
++    powSpectrum_.resize(kHsFftSizeBy2Plus1);
++    voiceHistory_.clear();
++    maybeHowlingHistory_.resize(4, 0);
++    howlingContinue_.resize(kHsFftSizeBy2 - kHsFftSizeBy2 / 8, 0);
++    notchFilter_.resize(kMaxNotchFilter);
++    for (size_t i = 0; i < kMaxNotchFilter; i++) {
++        notchFilter_[i].first = 0;
++        notchFilter_[i].second.reset(new NotchFilter(0, 1.0f));
++    }
++
++#ifdef HS_DEBUG_RECORD
++#ifdef LOCAL_TEST
++    suppression_condition_ = fopen("samples/suppression_condition.pcm", "wb");
++#else
++    before_hs_ = fopen("./before_hs.pcm", "wb");
++    after_hs_ = fopen("./after_hs.pcm", "wb");
++    suppression_condition_ = fopen("./suppression_condition.pcm", "wb");
++#endif // LOCAL_TEST
++#endif // HS_DEBUG_RECORD
++}
++
++HowlingSuppressor::~HowlingSuppressor() {
++    fft_.reset(nullptr);
++
++    fftData_.clear();
++    imagData_.clear();
++    realData_.clear();
++    powSpectrum_.clear();
++    voiceHistory_.clear();
++    maybeHowlingHistory_.clear();
++    howlingContinue_.clear();
++    for (size_t i = 0; i < kMaxNotchFilter; i++) {
++        notchFilter_[i].first = 0;
++        notchFilter_[i].second.release();
++    }
++    notchFilter_.clear();
++
++#ifdef HS_DEBUG_RECORD
++    fclose(before_hs_);
++    fclose(after_hs_);
++    fclose(suppression_condition_);
++#endif // HS_DEBUG_RECORD
++}
++
++void HowlingSuppressor::Process(float* audio, float* audioHighband) {
++    if (!enabled_) {
++        return;
++    }
++
++#ifdef HS_DEBUG_RECORD
++    if (before_hs_) {
++        for (size_t i = 0; i < kHsFrameSize; i++) {
++            hs_record_buffer_[i] = (int16_t)audio[i];
++        }
++        fwrite(&hs_record_buffer_[0], sizeof(int16_t), kHsFrameSize, before_hs_);
++    }
++#endif // HS_DEBUG_RECORD
++
++    //std::copy(audio.begin(), audio.end(), fftData_.begin() + kHsFftSize - kHsFrameSize);
++    for (size_t i = 0; i < kHsFftSize - kHsFrameSize; i++) {
++        fftData_[i] = fftData_[kHsFrameSize + i];
++    }
++    for (size_t i = 0; i < kHsFrameSize; i++) {
++        fftData_[kHsFftSize - kHsFrameSize + i] = audio[i];
++    }
++    std::copy(fftData_.begin(), fftData_.end(), realData_.begin());
++    for (size_t i = 0; i < kHsFftSize; i++) {
++        imagData_[i] = 0.0f;
++    }
++    fft_->Fft(realData_, imagData_);
++    std::transform(realData_.begin(), realData_.begin() + kHsFftSizeBy2Plus1, imagData_.begin(), powSpectrum_.begin(), [](float a, float b) { return sqrtf(a * a + b * b); });
++    //float meanAmp = std::accumulate(powSpectrum_.cbegin(), powSpectrum_.cend(), 0.0f) / (float)kHsFftSizeBy2Plus1;
++    float totalAmp = 0.0f;
++    float meanAmp = 0.0f;
++    for (size_t i = 0; i < kHsFftSizeBy2Plus1; i++) {
++        totalAmp += powSpectrum_[i];
++    }
++    meanAmp = totalAmp / (float)kHsFftSizeBy2Plus1;
++
++    int lowPeaks = 0;
++    int highPeaks = 0;
++    int howlingCount = 0;
++    int firstPeak = -1;
++    for (size_t i = 1; i < kHsFftSizeBy2Plus1 - 1; i++) {
++        // peaks with threshold
++        float rate1 = log2f(powSpectrum_[i] / (meanAmp + 0.0001f) + 1.0f);
++        if (rate1 > kHowlingJudgeThreshold1) {
++            // find out the frequency-domain peak point
++            float rate2L = log2f(powSpectrum_[i] / (powSpectrum_[i - 1] + 0.0001f) + 1.0f);
++            float rate2R = log2f(powSpectrum_[i] / (powSpectrum_[i + 1] + 0.0001f) + 1.0f);
++            if ((rate2L > 1.0f) && (rate2R > 1.0f)) {
++                if (i < kHsFftSize / 4) {
++                    lowPeaks += 1;
++                } else {
++                    highPeaks += 1;
++                }
++                if (firstPeak == -1) {
++                    firstPeak = (int)i;
++                }
++                if (rate1 > kHowlingJudgeThreshold2) {
++                    howlingCount_ += 1;
++                }
++            }
++        }
++        if ((i >= kHsFftSizeBy2 / 8) && (totalAmp > 2000.0f)) {
++            if (rate1 > kHowlingJudgeThreshold7) {
++                howlingContinue_[i - kHsFftSizeBy2 / 8] += 1;
++            } else {
++                howlingContinue_[i - kHsFftSizeBy2 / 8] /= 2;
++            }
++        }
++    }
++
++    float quantilyEnergy = 0.0f;
++    float totalEnergy = 0.0f;
++    std::vector<float> sortedPowSpecturm(kHsFftSize / 4, 0.0f);
++    std::copy(powSpectrum_.begin(), powSpectrum_.begin() + kHsFftSize / 4, sortedPowSpecturm.begin());
++    std::sort(sortedPowSpecturm.begin(), sortedPowSpecturm.end());
++    std::transform(sortedPowSpecturm.begin(), sortedPowSpecturm.end(), sortedPowSpecturm.begin(), [](float a) { return a * a; });
++    for (size_t i = 0; i < kHsFftSize / 4; i++) {
++        totalEnergy += sortedPowSpecturm[i];
++        if (i >= kHsFftSize / 4 - 6) {
++            quantilyEnergy += sortedPowSpecturm[i];
++        }
++    }
++    quantilyRate_ = 0.9f * quantilyRate_ + 0.1f * quantilyEnergy / (totalEnergy + 0.0001f);
++    quantilyRate_ = quantilyRate_ > 1.0f ? 1.0f : quantilyRate_;
++
++    float highQuantilyEnergy = 0.0f;
++    float highTotalEnergy = 0.0f;
++    std::vector<float> highSortedPowSpecturm(kHsFftSize / 4, 0.0f);
++    std::copy(powSpectrum_.begin() + kHsFftSize / 4, powSpectrum_.begin() + kHsFftSize / 2, highSortedPowSpecturm.begin());
++    std::sort(highSortedPowSpecturm.begin(), highSortedPowSpecturm.end());
++    std::transform(highSortedPowSpecturm.begin(), highSortedPowSpecturm.end(), highSortedPowSpecturm.begin(), [](float a) { return a * a; });
++    for (size_t i = 0; i < kHsFftSize / 4; i++) {
++        highTotalEnergy += highSortedPowSpecturm[i];
++        if (i >= kHsFftSize / 4 - 6) {
++            highQuantilyEnergy += highSortedPowSpecturm[i];
++        }
++    }
++    highQuantilyRate_ = 0.9f * highQuantilyRate_ + 0.1f * highQuantilyEnergy / (highTotalEnergy + 0.0001f);
++    highQuantilyRate_ = highQuantilyRate_ > 1.0f ? 1.0f : highQuantilyRate_;
++
++    bool condition1 = howlingCount >= kHowlingJudgeThreshold4 && howlingCount <= kHowlingJudgeThreshold3;
++    bool condition2 = (lowPeaks < highPeaks) && (highQuantilyRate_ > kHowlingJudgeThreshold6);
++    bool condition3 = ((size_t)firstPeak > kHsFftSize / 32) && (highQuantilyRate_ > kHowlingJudgeThreshold6);
++    bool condition4 = ((size_t)firstPeak > kHsFftSize / 32) && (quantilyRate_ > kHowlingJudgeThreshold5);
++
++    if  (highTotalEnergy + totalEnergy > 2000.0f) {
++        if (!(condition1 || condition2 || condition3 || condition4)) {
++            voiceHistory_.push_back(1);
++        } else {
++            voiceHistory_.push_back(0);
++        }
++        if (voiceHistory_.size() >= 100) {
++            voiceHistory_.erase(voiceHistory_.begin());
++        }
++    }
++
++    int voiceCount = 0;
++    for_each(voiceHistory_.begin(), voiceHistory_.end(), [&voiceCount](int x) { voiceCount += x; });
++
++    // bool hasHowling = false;
++    bool maybeHowling = false;
++
++    std::vector<size_t> howlingIndex;
++    howlingIndex.clear();
++    // howling already exist, do compression
++    if (voiceCount < 40) {
++        // hasHowling = true;
++        float targetSuppression = howlingSuppression_ * kAttackFactor;
++        if (targetSuppression < 0.01f) {
++            targetSuppression = 0.01f;
++        }
++        float step = (targetSuppression - howlingSuppression_) / (float)kHsFrameSize;
++        for (size_t i = 0; i < kHsFrameSize; i++) {
++            audio[i] *= howlingSuppression_;
++            if (audioHighband != nullptr) {
++                audioHighband[i] *= howlingSuppression_;
++            }
++            howlingSuppression_ += step;
++        }
++    } else {
++        float targetSuppression = howlingSuppression_ * kReleaseFactor + (1.0f - kReleaseFactor);
++        float step = (targetSuppression - howlingSuppression_) / (float)kHsFrameSize;
++        for (size_t i = 0; i < kHsFrameSize; i++) {
++            audio[i] *= howlingSuppression_;
++            if (audioHighband != nullptr) {
++                audioHighband[i] *= howlingSuppression_;
++            }
++            howlingSuppression_ += step;
++        }
++
++        // maybe appear howling, do filter
++        size_t startHowling = 0;
++        size_t endHowling = 0;
++        for (size_t i = 1; i < kHsFftSizeBy2 - kHsFftSizeBy2 / 8; i++) {
++            if (howlingContinue_[i] > 0) {
++                if (startHowling == 0) {
++                    startHowling = i;
++                } else {
++                    endHowling = i;
++                }
++            } else {
++                if (endHowling > 0) {
++                    float localAmp = 0.0f;
++                    for (size_t j = startHowling; j <= endHowling; j++) {
++                        localAmp += powSpectrum_[j + kHsFftSizeBy2 / 8];
++                    }
++                    size_t howlingWidth = endHowling - startHowling + 1;
++                    localAmp /= (float)howlingWidth;
++
++                    float lowerLocalAmp = 0.0f;
++                    size_t lowerStart = 0;
++                    size_t lowerWidth = startHowling + kHsFftSizeBy2 / 8;
++                    if ((startHowling + kHsFftSizeBy2 / 8) > (howlingWidth * 2)) {
++                        lowerStart = startHowling + kHsFftSizeBy2 / 8 - howlingWidth * 2;
++                        lowerWidth = howlingWidth * 2;
++                    }
++                    for (size_t j = lowerStart; j < startHowling; j++) {
++                        lowerLocalAmp += powSpectrum_[j];
++                    }
++                    lowerLocalAmp /= (float)lowerWidth;
++
++                    float upperLocalAmp = 0.0f;
++                    size_t upperEnd = kHsFftSizeBy2;
++                    size_t upperWidth = 7 * kHsFftSizeBy2 / 8 - endHowling;
++                    if ((7 * kHsFftSizeBy2 / 8 - endHowling) > (howlingWidth * 2)) {
++                        upperEnd = endHowling + kHsFftSizeBy2 / 8 + howlingWidth * 2;
++                        upperWidth = howlingWidth * 2;
++                    }
++                    for (size_t j = endHowling + 1; j <= upperEnd; j++) {
++                        upperLocalAmp += powSpectrum_[j];
++                    }
++                    upperLocalAmp /= (float)upperWidth;
++
++                    float lowerRate = log2f(localAmp / (lowerLocalAmp + 0.0001f) + 1.0f);
++                    float upperRate = log2f(localAmp / (upperLocalAmp + 0.0001f) + 1.0f);
++                    float localRate = log2f(localAmp / (meanAmp + 0.0001f) + 1.0f);
++                    if ((howlingWidth >= 4) && (localRate >= kHowlingJudgeThreshold2) && (lowerRate >= 1.1375f) && (upperRate >= 1.1375f)) {
++                        howlingIndex.push_back(kHsFftSizeBy2 / 8 + (endHowling + startHowling) / 2);
++                    }
++                }
++                startHowling = 0;
++                endHowling = 0;
++            }
++        }
++        if ((howlingIndex.size() < 4) && (howlingIndex.size() > 0)) {
++            maybeHowling = true;
++            maybeHowlingHistory_.push_back(1);
++        } else {
++            howlingIndex.clear();
++            maybeHowlingHistory_.push_back(0);
++        }
++        if (maybeHowlingHistory_.size() > 4) {
++            maybeHowlingHistory_.erase(maybeHowlingHistory_.begin());
++        }
++        size_t maybeHowlingCount = maybeHowlingHistory_[0] + maybeHowlingHistory_[1] + maybeHowlingHistory_[2] + maybeHowlingHistory_[3];
++
++        if ((maybeHowlingCount < 2) || maybeHowling) {
++            for (size_t i = 0; i < kMaxNotchFilter; i++) {
++                bool indexInFilter = false;
++                size_t currentIndex = notchFilter_[i].first;
++                for (size_t j = 0; j < howlingIndex.size(); j++) {
++                    if (currentIndex == howlingIndex[j]) {
++                        indexInFilter = true;
++                        howlingIndex.erase(howlingIndex.begin() + j);
++                    }
++                }
++                if ((!indexInFilter) && (currentIndex > 0)) {
++                    notchFilter_[i].first += kFadeOutMark;
++                }
++            }
++        }
++
++        for (size_t i = 0; i < howlingIndex.size(); i++) {
++            for (size_t j = 0; j < kMaxNotchFilter; j++) {
++                if (notchFilter_[j].first == 0) {
++                    notchFilter_[j].first = howlingIndex[i] + kFadeInMark;
++                    notchFilter_[j].second->redesign(howlingIndex[i], 0.0001f, 1.0f);
++                    break;
++                }
++            }
++        }
++
++        float beforeEnergy = 0.0f;
++        // std::for_each(std::begin(audio), std::end(audio), [&beforeEnergy](float x) { beforeEnergy += x * x; });
++        for (size_t i = 0; i < kHsFrameSize; i++) {
++            beforeEnergy += (audio[i] * audio[i]);
++        }
++
++        for (size_t i = 0; i < kMaxNotchFilter; i++) {
++            if (notchFilter_[i].first > kFadeOutMark) {
++                notchFilter_[i].first = 0;
++                notchFilter_[i].second->runningFilter(audio, kHsFrameSize, filterFade::kFadeOut);
++            } else if (notchFilter_[i].first > kFadeInMark) {
++                notchFilter_[i].first -= kFadeInMark;
++                notchFilter_[i].second->runningFilter(audio, kHsFrameSize, filterFade::kFadeIn);
++            } else if (notchFilter_[i].first > 0) {
++                notchFilter_[i].second->runningFilter(audio, kHsFrameSize, filterFade::kNoFade);
++            }
++        }
++        if (audioHighband != nullptr) {
++            float afterEnergy = 0.0f;
++            // std::for_each(std::begin(audio), std::end(audio), [&afterEnergy](float x) { afterEnergy += (x * x); });
++            for (size_t i = 0; i < kHsFrameSize; i++) {
++                afterEnergy += (audio[i] * audio[i]);
++            }
++            float gain = afterEnergy / (beforeEnergy + 1e-6f);
++            if (gain < 0.9025f) {
++                gain = gain > 1e-4f ? sqrtf(gain) : 0.01f;
++                //std::transform(std::begin(audioHighband), std::end(audioHighband), std::begin(audioHighband), [gain](float x) { return x * gain; });
++                for (size_t i = 0; i < kHsFrameSize; i++) {
++                    audioHighband[i] *= gain;
++                }
++            }
++        }
++    }
++
++#ifdef HS_DEBUG_RECORD
++    if (suppression_condition_) {
++        int x = 0;
++        if (hasHowling == true) {
++            x = 20000;
++        } else if (maybeHowling == true) {
++            x = 10000;
++        }
++        for (size_t i = 0; i < kHsFrameSize; i++) {
++            hs_record_buffer_[i] = (int16_t)x;
++        }
++        fwrite(&hs_record_buffer_[0], sizeof(int16_t), kHsFrameSize, suppression_condition_);
++    }
++#endif // HS_DEBUG_RECORD
++
++#ifdef HS_DEBUG_RECORD
++    if (after_hs_) {
++        for (size_t i = 0; i < kHsFrameSize; i++) {
++            hs_record_buffer_[i] = (int16_t)audio[i];
++        }
++        fwrite(&hs_record_buffer_[0], sizeof(int16_t), kHsFrameSize, after_hs_);
++    }
++#endif // HS_DEBUG_RECORD
++}
++
++void HowlingSuppressor::Enable(bool enable) {
++    enabled_ = enable;
++}
++
++}  // namespace webrtc
+diff --git a/modules/audio_processing/hs/howling_suppressor.h b/modules/audio_processing/hs/howling_suppressor.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..b47e7fb6a3789176ed745d67db3569153e06f7cb
+--- /dev/null
++++ b/modules/audio_processing/hs/howling_suppressor.h
+@@ -0,0 +1,83 @@
++/*
++ *  Copyright (c) 2012 The WebRTC project authors. All Rights Reserved.
++ *
++ *  Use of this source code is governed by a BSD-style license
++ *  that can be found in the LICENSE file in the root of the source
++ *  tree. An additional intellectual property rights grant can be found
++ *  in the file PATENTS.  All contributing project authors may
++ *  be found in the AUTHORS file in the root of the source tree.
++ */
++
++#ifndef MODULES_AUDIO_PROCESSING_HS_HOWLING_SUPPRESSOR_H_
++#define MODULES_AUDIO_PROCESSING_HS_HOWLING_SUPPRESSOR_H_
++
++#include <memory>
++#include <vector>
++#include <utility>
++
++// #define HS_DEBUG_RECORD
++#ifdef HS_DEBUG_RECORD
++#include <cstdio>
++#endif // HS_DEBUG_RECORD
++
++#include "hs_fft_1024.h"
++#include "hs_common.h"
++#include "notch_filter.h"
++
++
++namespace webrtc {
++
++class HowlingSuppressor {
++public:
++    explicit HowlingSuppressor();
++    ~HowlingSuppressor();
++
++    // Applies howling suppression.
++    void Process(float* audio, float* audioHighband);
++
++    // Enable or disable howling suppression
++    void Enable(bool enable);
++
++    bool isEnasbled() { return enabled_; }
++
++private:
++    bool enabled_;
++
++    float howlingCount_ = 0.0f;
++
++    float howlingSuppression_ = 1.0f;
++
++    float quantilyRate_ = 0.6f;
++
++    float highQuantilyRate_ = 0.6f;
++
++    std::unique_ptr<HsFft1024> fft_;
++
++    std::vector<float> fftData_;
++
++    std::vector<float> imagData_;
++
++    std::vector<float> realData_;
++
++    std::vector<float> powSpectrum_;
++
++    std::vector<int> voiceHistory_;
++
++    std::vector<size_t> maybeHowlingHistory_;
++
++    std::vector<size_t> howlingContinue_;
++
++    std::vector<std::pair<size_t, std::unique_ptr<NotchFilter> > > notchFilter_;
++
++#ifdef HS_DEBUG_RECORD
++    FILE* before_hs_ = nullptr;
++    FILE* after_hs_ = nullptr;
++    FILE* suppression_condition_ = nullptr;
++
++    int16_t hs_record_buffer_[kHsFrameSize];
++#endif // HS_DEBUG_RECORD
++};
++
++}  // namespace webrtc
++
++#endif  // MODULES_AUDIO_PROCESSING_HS_HOWLING_SUPPRESSOR_H_
+diff --git a/modules/audio_processing/hs/howling_suppressor_lpc.cc b/modules/audio_processing/hs/howling_suppressor_lpc.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..86095a5296eae12f611b82afc978b28a69aedee9
+--- /dev/null
++++ b/modules/audio_processing/hs/howling_suppressor_lpc.cc
+@@ -0,0 +1,210 @@
++/*
++ *  Copyright (c) 2012 The WebRTC project authors. All Rights Reserved.
++ *
++ *  Use of this source code is governed by a BSD-style license
++ *  that can be found in the LICENSE file in the root of the source
++ *  tree. An additional intellectual property rights grant can be found
++ *  in the file PATENTS.  All contributing project authors may
++ *  be found in the AUTHORS file in the root of the source tree.
++ */
++
++#include "howling_suppressor_lpc.h"
++#include "hs_fft_1024.h"
++#include "hs_common.h"
++
++#include <algorithm>
++#include <cmath>
++#include <vector>
++#include <iostream>
++
++#include "rtc_base/logging.h"
++
++namespace webrtc {
++
++HowlingSuppressorLpc::HowlingSuppressorLpc() :
++    enabled_(false),
++    fft_(new HsFft1024()) {
++
++    blockData_.resize(kHsFftSize);
++    innerProduct_.resize(kHsFftSize - kHsLpcOrder);
++    imagData_.resize(kHsFftSize);
++    realData_.resize(kHsFftSize);
++    ampSpecturm_.resize(kHsFftSizeBy2);
++    lpcCoeff_.resize(kHsLpcOrder + 1);
++    autocorrelationCoeff_.resize(kHsLpcOrder + 1);
++    howlingHistory_.clear();
++    perceptronModel_.assign(std::begin(kHsPerceptronModel), std::end(kHsPerceptronModel));
++
++#ifdef HS_DEBUG_RECORD
++    before_hs_ = fopen("/sdcard/webrtc3Arecord/before_hs.pcm", "wb");
++    after_hs_ = fopen("/sdcard/webrtc3Arecord/after_hs.pcm", "wb");
++    suppression_condition_ = fopen("/sdcard/webrtc3Arecord/suppression_condition.txt", "wb");
++#endif // HS_DEBUG_RECORD
++}
++
++HowlingSuppressorLpc::~HowlingSuppressorLpc() {
++    fft_.reset(nullptr);
++
++    blockData_.clear();
++    imagData_.clear();
++    realData_.clear();
++    ampSpecturm_.clear();
++    lpcCoeff_.clear();
++    autocorrelationCoeff_.clear();
++    howlingHistory_.clear();
++    perceptronModel_.clear();
++#ifdef HS_DEBUG_RECORD
++    fclose(before_hs_);
++    fclose(after_hs_);
++    fclose(suppression_condition_);
++#endif // HS_DEBUG_RECORD
++}
++
++void HowlingSuppressorLpc::GetLpc() {
++    // auto correlation
++    for (size_t i = 0; i < kHsLpcOrder + 1; i++) {
++        float x = 0.0f;
++        std::transform(blockData_.begin() + kHsLpcOrder + 1, blockData_.end(), blockData_.begin() + kHsLpcOrder - i + 1, innerProduct_.begin(), [](float a, float b) { return a * b; });
++        std::for_each(innerProduct_.begin(), innerProduct_.end(), [&x](float a) { x += a; });
++        autocorrelationCoeff_[i] = x;
++    }
++
++    // lpc estimate
++    bool fineEstimate = true;
++    float error = autocorrelationCoeff_[0];
++    float lpcMatrix[kHsLpcOrder + 1][kHsLpcOrder + 1] = {0.0f};
++    for (size_t i = 1; i < kHsLpcOrder + 1; i++) {
++        if (fabsf(error) < 0.0001f) {
++            fineEstimate = false;
++            break;
++        }
++
++        float temp = autocorrelationCoeff_[i];
++        for (size_t j = 1; j < i; j++) {
++            temp -= (lpcMatrix[i - 1][j] * autocorrelationCoeff_[i - j]);
++        }
++        temp /= error;
++        lpcMatrix[i][i] = temp;
++
++        if (i > 1) {
++            for (size_t j = 1; j < i; j++) {
++                lpcMatrix[i][j] = lpcMatrix[i - 1][j] - temp * lpcMatrix[i - 1][i - j];
++            }
++        }
++
++        error *= (1.0f - temp * temp);
++    }
++
++    lpcCoeff_[0] = 1.0f;
++    if (fineEstimate) {
++        for (size_t i = 1; i < kHsLpcOrder + 1; i++) {
++            lpcCoeff_[i] = -lpcMatrix[kHsLpcOrder][i];
++        }
++    } else {
++        for (size_t i = 1; i < kHsLpcOrder + 1; i++) {
++            lpcCoeff_[i] = 0.0f;
++        }
++    }
++}
++
++int HowlingSuppressorLpc::Predict() {
++    float perceptron = 9.0f;
++    std::transform(ampSpecturm_.begin(), ampSpecturm_.end(), perceptronModel_.begin(), ampSpecturm_.begin(), [](float a, float b) { return a * b; });
++    std::for_each(ampSpecturm_.begin(), ampSpecturm_.end(), [&perceptron](float a) { perceptron += a; });
++    return perceptron > 0.0f ? 1 : 0;
++}
++
++void HowlingSuppressorLpc::Process(float* audio) {
++    if (!enabled_) {
++        return;
++    }
++
++#ifdef HS_DEBUG_RECORD
++    if (before_hs_) {
++        for (size_t i = 0; i < kFrameSize; i++) {
++            hs_record_buffer_[i] = (int16_t)audio[i];
++        }
++        fwrite(&hs_record_buffer_[0], sizeof(int16_t), kFrameSize, before_hs_);
++    }
++#endif // HS_DEBUG_RECORD
++
++    // get origin data
++    for (size_t i = 0; i < kHsFftSize - kFrameSize; i++) {
++        blockData_[i] = blockData_[kFrameSize + i];
++    }
++    for (size_t i = 0; i < kFrameSize; i++) {
++        blockData_[kHsFftSize - kFrameSize + i] = audio[i];
++    }
++
++    // calculate frame energy
++    float energy = 0.0f;
++    std::for_each(blockData_.begin(), blockData_.end(), [&energy](float a) { energy += (a * a); });
++
++    int label = 0;
++    if (energy >= 5.76e6) {
++        // calculate lpc
++        GetLpc();
++
++        // burge specturm estimate
++        for (size_t i = 0; i < kHsFftSize; i++) {
++            realData_[i] = 0.0f;
++            imagData_[i] = 0.0f;
++        }
++        std::copy(lpcCoeff_.begin(), lpcCoeff_.end(), realData_.begin());
++        fft_->Fft(realData_, imagData_);
++        std::transform(realData_.begin(), realData_.begin() + kHsFftSizeBy2, imagData_.begin(), ampSpecturm_.begin(), [](float a, float b) { return 20.0f * log10f(1.0f / (sqrtf(a * a + b * b) + 0.0001f) + 1.0f); });
++
++        // specturm normalize
++        float min = ampSpecturm_[0];
++        float max = ampSpecturm_[0];
++        for (size_t i = 1; i < kHsFftSizeBy2; i++) {
++            min = min > ampSpecturm_[i] ? ampSpecturm_[i] : min;
++            max = max < ampSpecturm_[i] ? ampSpecturm_[i] : max;
++        }
++        std::transform(ampSpecturm_.begin(), ampSpecturm_.end(), ampSpecturm_.begin(), [min, max](float a) { return (a - min) / (max - min + 0.0001f); });
++
++        // preceptron predict result
++        label = Predict();
++
++        // time domain estimate
++        howlingHistory_.push_back(label);
++        if (howlingHistory_.size() > 100) {
++            howlingHistory_.erase(howlingHistory_.begin());
++        }
++        int howlingCount = 0;
++        std::for_each(howlingHistory_.begin(), howlingHistory_.end(), [&howlingCount](int a) { howlingCount += a; });
++        if (howlingHistory_.size() == 100 && howlingCount <= 50) {
++            label = 0;
++        }
++    }
++
++    float targetSuppression = howlingSuppression_;
++    if (energy >= 5.76e6) {
++        if (label) {
++            targetSuppression = howlingSuppression_ * kAttackFactor;
++        } else {
++            targetSuppression = howlingSuppression_ * kReleaseFactor + (1.0f - kReleaseFactor);
++        }
++    }
++
++    float step = (targetSuppression - howlingSuppression_) / (float)kFrameSize;
++    for (size_t i = 0; i < kFrameSize; i++) {
++        audio[i] *= howlingSuppression_;
++        howlingSuppression_ += step;
++    }
++
++#ifdef HS_DEBUG_RECORD
++    if (after_hs_) {
++        for (size_t i = 0; i < kFrameSize; i++) {
++            hs_record_buffer_[i] = (int16_t)audio[i];
++        }
++        fwrite(&hs_record_buffer_[0], sizeof(int16_t), kFrameSize, after_hs_);
++    }
++#endif // HS_DEBUG_RECORD
++}
++
++void HowlingSuppressorLpc::Enable(bool enable) {
++    enabled_ = enable;
++}
++
++}  // namespace webrtc
+diff --git a/modules/audio_processing/hs/howling_suppressor_lpc.h b/modules/audio_processing/hs/howling_suppressor_lpc.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..0492c087eb63d35adf540b0959485ec87701ea56
+--- /dev/null
++++ b/modules/audio_processing/hs/howling_suppressor_lpc.h
+@@ -0,0 +1,82 @@
++/*
++ *  Copyright (c) 2012 The WebRTC project authors. All Rights Reserved.
++ *
++ *  Use of this source code is governed by a BSD-style license
++ *  that can be found in the LICENSE file in the root of the source
++ *  tree. An additional intellectual property rights grant can be found
++ *  in the file PATENTS.  All contributing project authors may
++ *  be found in the AUTHORS file in the root of the source tree.
++ */
++
++#ifndef MODULES_AUDIO_PROCESSING_HS_HOWLING_SUPPRESSOR_LPC_H_
++#define MODULES_AUDIO_PROCESSING_HS_HOWLING_SUPPRESSOR_LPC_H_
++
++#include <memory>
++#include <vector>
++
++#define HS_DEBUG_RECORD
++#ifdef HS_DEBUG_RECORD
++#include <cstdio>
++#endif // HS_DEBUG_RECORD
++
++#include "hs_fft_1024.h"
++#include "hs_common.h"
++
++
++namespace webrtc {
++
++class HowlingSuppressorLpc {
++public:
++    explicit HowlingSuppressorLpc();
++    ~HowlingSuppressorLpc();
++
++    // Applies howling suppression.
++    void Process(float* audio);
++
++    // Enable or disable howling suppression
++    void Enable(bool enable);
++
++    bool isEnabled() { return enabled_; }
++
++private:
++    void GetLpc();
++
++    int Predict();
++
++private:
++    bool enabled_;
++
++    float howlingSuppression_ = 1.0f;
++
++    std::unique_ptr<HsFft1024> fft_;
++
++    std::vector<float> blockData_;
++
++    std::vector<float> innerProduct_;
++
++    std::vector<float> imagData_;
++
++    std::vector<float> realData_;
++
++    std::vector<float> ampSpecturm_;
++
++    std::vector<float> perceptronModel_;
++
++    std::vector<float> lpcCoeff_;
++
++    std::vector<float> autocorrelationCoeff_;
++
++    std::vector<int> howlingHistory_;
++
++#ifdef HS_DEBUG_RECORD
++    FILE* before_hs_ = nullptr;
++    FILE* after_hs_ = nullptr;
++    FILE* suppression_condition_ = nullptr;
++
++    int16_t hs_record_buffer_[kFrameSize];
++#endif // HS_DEBUG_RECORD
++};
++
++}  // namespace webrtc
++
++#endif  // MODULES_AUDIO_PROCESSING_HS_HOWLING_SUPPRESSOR_LPC_H_
+diff --git a/modules/audio_processing/hs/hs_common.h b/modules/audio_processing/hs/hs_common.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..8813a0becafc47be0df556f0337d9caac5541b68
+--- /dev/null
++++ b/modules/audio_processing/hs/hs_common.h
+@@ -0,0 +1,78 @@
++/*
++ *  Copyright (c) 2019 The WebRTC project authors. All Rights Reserved.
++ *
++ *  Use of this source code is governed by a BSD-style license
++ *  that can be found in the LICENSE file in the root of the source
++ *  tree. An additional intellectual property rights grant can be found
++ *  in the file PATENTS.  All contributing project authors may
++ *  be found in the AUTHORS file in the root of the source tree.
++ */
++
++#ifndef MODULES_AUDIO_PROCESSING_HS_HS_COMMON_H_
++#define MODULES_AUDIO_PROCESSING_HS_HS_COMMON_H_
++
++#include <cstddef>
++#include <cmath>
++
++namespace webrtc {
++const size_t kHsFrameSize = 160;
++
++const float kMPi = 3.141592653589793f;
++const float kConstBandwidth = 100.0f;
++
++const size_t kHsFftSize = 256;
++const size_t kHsFftSizeBy2 = kHsFftSize / 2;
++const size_t kHsFftSizeBy2Plus1 = kHsFftSize / 2 + 1;
++const size_t kHsFftExp = 8;
++
++const float kSampleRateHz = 16000.0f;
++const float kHzPerBin = kSampleRateHz / kHsFftSize;
++
++const size_t kAutocorrelationTimes = 9;
++const size_t kAutoCorrelationLength = kHsFrameSize - kAutocorrelationTimes;
++
++const float kHowlingJudgeThreshold1 = 1.585f;
++const float kHowlingJudgeThreshold2 = 3.0f;
++const float kHowlingJudgeThreshold3 = 5;
++const float kHowlingJudgeThreshold4 = 1;
++const float kHowlingJudgeThreshold5 = 0.90f;
++const float kHowlingJudgeThreshold6 = 0.45f;
++const float kHowlingJudgeThreshold7 = 2.3219f;
++
++const float kAttackFactor = 0.2f;
++const float kReleaseFactor = 0.9f;
++
++const size_t kHsLpcOrder = 18;
++
++const float kHsPerceptronModel[kHsFftSizeBy2] = {
++    -7.7272, 3.7362, 11.9047, -9.1530, -3.8769, -4.4368, -2.6529, 1.7809,
++    -7.1421, 4.8420, 2.6640, -7.3017, -9.3746, 9.8005, -0.5949, 2.0700,
++    3.0269, 5.9048, -6.7939, -0.1881, 0.1747, -6.2445, 8.3340, -7.9999,
++    7.5885, -7.3039, 0.0549, -6.3128, -1.5254, -0.0589, 3.1529, -1.9930,
++    -11.4023, 9.7257, 6.8065, 2.3757, -5.8643, 7.1431, -0.5983, -0.3207,
++    5.5845, 2.4658, 0.7418, -9.5776, -3.0657, 7.2486, -0.2034, -1.7016,
++    -5.1184, 0.9796, -5.3344, -0.1705, -9.0601, -1.4107, -0.9054, -5.7047,
++    3.2476, 2.8252, -7.9306, -5.3104, 2.5256, -5.1454, -5.2187, -3.1036,
++    15.4931, -3.7936, 3.8484, -3.4083, -12.4609, -2.7647, 2.9080, 0.4166,
++    0.3740, 6.7428, -2.6398, -2.8110, -4.1262, -2.9968, -0.4834, 7.0881,
++    -2.5261, 2.9803, -1.2297, 5.4016, -4.6630, -0.0614, 1.1132, -0.3115,
++    -0.7948, -0.3123, -7.2833, -5.0574, -8.2364, 3.5211, 7.1396, -7.5670,
++    13.9414, 2.0945, 6.7066, 1.2705, 3.4687, 2.6688, 11.7838, -6.6963,
++    8.6017, 9.8097, 6.6096, -3.4775, 6.3845, 4.7371, -1.8891, -1.4825,
++    -12.7654, -7.6494, 17.7135, -24.2523, 0.0686, -40.9177, 52.3325, -10.3718,
++    8.2634, -22.5329, 3.8653, 29.7044, -14.1116, -62.7031, -7.7792, 35.8188
++};
++
++const size_t kMaxNotchFilter = 8;
++
++enum filterFade {
++    kNoFade = 0,
++    kFadeIn,
++    kFadeOut,
++};
++const size_t kFadeInMark = 10000;
++const size_t kFadeOutMark = 20000;
++
++}  // namespace webrtc
++
++#endif  // MODULES_AUDIO_PROCESSING_HS_HS_COMMON_H_
+diff --git a/modules/audio_processing/hs/hs_fft_1024.cc b/modules/audio_processing/hs/hs_fft_1024.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..460c2375d2ee3dae0317e761f2525499ad2284a6
+--- /dev/null
++++ b/modules/audio_processing/hs/hs_fft_1024.cc
+@@ -0,0 +1,92 @@
++/*
++ *  Copyright (c) 2019 The WebRTC project authors. All Rights Reserved.
++ *
++ *  Use of this source code is governed by a BSD-style license
++ *  that can be found in the LICENSE file in the root of the source
++ *  tree. An additional intellectual property rights grant can be found
++ *  in the file PATENTS.  All contributing project authors may
++ *  be found in the AUTHORS file in the root of the source tree.
++ */
++#include "hs_fft_1024.h"
++#include "hs_common.h"
++
++#include <algorithm>
++#include <cmath>
++#include <vector>
++
++namespace webrtc
++{
++HsFft1024::HsFft1024()
++{
++    auto bitReverse = [](size_t n) {
++        size_t i = 0;
++        size_t r = 0;
++        do
++        {
++            r |= (n & 0x0001);
++            n >>= 1;
++            r <<= 1;
++        } while (i++ < (kHsFftExp - 2));
++        r |= (n & 0x0001);
++        return r;
++    };
++
++    bitReverseList_.resize(kHsFftSize);
++    realButterflyOperator_.resize(kHsFftSize);
++    imagBufferflyOperator_.resize(kHsFftSize);
++    for (size_t i = 0; i < kHsFftSize; i++)
++    {
++        bitReverseList_[i] = bitReverse(i);
++        realButterflyOperator_[i] = cosf(2.0f * kMPi * i / (float)kHsFftSize);
++        imagBufferflyOperator_[i] = sinf(2.0f * kMPi * i / (float)kHsFftSize);
++    }
++}
++
++HsFft1024::~HsFft1024() { }
++
++void HsFft1024::Fft(std::vector<float> &real, std::vector<float> &imag) {
++    Shuffle(real);
++
++    for (size_t i = 0; i < kHsFftExp; i++)
++    {
++        size_t bs = 1 << (kHsFftExp - 1 - i);
++        size_t ps = 1 << i;
++        for (size_t j = 0; j < bs; j++)
++        {
++            for (size_t k = 0; k < ps; k++)
++            {
++                size_t position = bs * k;
++                float realRotation = realButterflyOperator_[position];
++                float imagRotation = -imagBufferflyOperator_[position];
++
++                size_t position1 = 2 * j * ps + k;
++                size_t position2 = 2 * j * ps + ps + k;
++
++                float realPart = real[position2] * realRotation - imag[position2] * imagRotation;
++                float imagPart = real[position2] * imagRotation + imag[position2] * realRotation;
++                real[position2] = real[position1] - realPart;
++                imag[position2] = imag[position1] - imagPart;
++                real[position1] = real[position1] + realPart;
++                imag[position1] = imag[position1] + imagPart;
++            }
++        }
++    }
++}
++
++void HsFft1024::Shuffle(std::vector<float> &buf)
++{
++    std::vector<bool> flag(kHsFftSize, true);
++    for (size_t i = 0; i < kHsFftSize; i++)
++    {
++        if (flag[i])
++        {
++            float temp = buf[i];
++            buf[i] = buf[bitReverseList_[i]];
++            buf[bitReverseList_[i]] = temp;
++            flag[i] = false;
++            flag[bitReverseList_[i]] = false;
++        }
++    }
++}
++
++} // namespace webrtc
+diff --git a/modules/audio_processing/hs/hs_fft_1024.h b/modules/audio_processing/hs/hs_fft_1024.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..a8ad23d9aa02f7f5ad9f243f6ec498a95c787e2b
+--- /dev/null
++++ b/modules/audio_processing/hs/hs_fft_1024.h
+@@ -0,0 +1,40 @@
++/*
++ *  Copyright (c) 2019 The WebRTC project authors. All Rights Reserved.
++ *
++ *  Use of this source code is governed by a BSD-style license
++ *  that can be found in the LICENSE file in the root of the source
++ *  tree. An additional intellectual property rights grant can be found
++ *  in the file PATENTS.  All contributing project authors may
++ *  be found in the AUTHORS file in the root of the source tree.
++ */
++#ifndef MODULES_AUDIO_PROCESSING_HS_HS_FFT_H_
++#define MODULES_AUDIO_PROCESSING_HS_HS_FFT_H_
++
++#include "hs_common.h"
++
++#include <vector>
++#include <cstdio>
++
++namespace webrtc
++{
++class HsFft1024
++{
++public:
++    explicit HsFft1024();
++    ~HsFft1024();
++
++    void Fft(std::vector<float> &real, std::vector<float> &imag);
++
++private:
++    void Shuffle(std::vector<float> &data);
++
++private:
++    std::vector<size_t> bitReverseList_;
++
++    std::vector<float> realButterflyOperator_;
++
++    std::vector<float> imagBufferflyOperator_;
++};
++} // namespace webrtc
++
++#endif // MODULES_AUDIO_PROCESSING_HS_HS_FFT_H_
+\ No newline at end of file
+diff --git a/modules/audio_processing/hs/notch_filter.cc b/modules/audio_processing/hs/notch_filter.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..99baa0bde4ab0d27e0e98097a5ce8b4515106749
+--- /dev/null
++++ b/modules/audio_processing/hs/notch_filter.cc
+@@ -0,0 +1,94 @@
++/*
++ *  Copyright (c) 2012 The WebRTC project authors. All Rights Reserved.
++ *
++ *  Use of this source code is governed by a BSD-style license
++ *  that can be found in the LICENSE file in the root of the source
++ *  tree. An additional intellectual property rights grant can be found
++ *  in the file PATENTS.  All contributing project authors may
++ *  be found in the AUTHORS file in the root of the source tree.
++ */
++
++#include "notch_filter.h"
++#include "hs_common.h"
++
++#include <algorithm>
++#include <cmath>
++#include <vector>
++#include <iostream>
++
++namespace webrtc {
++
++NotchFilter::NotchFilter(int index, float gain) {
++    design(index, gain, 10.0f);
++}
++
++NotchFilter::~NotchFilter() {}
++
++void NotchFilter::reset() {
++    z1_ = 0.0f;
++    z2_ = 0.0f;
++}
++
++void NotchFilter::redesign(int index, float gain, float quality) {
++    design(index, gain, quality);
++    reset();
++}
++
++void NotchFilter::runningFilter(float * audio, int size, filterFade fade) {
++    if ((audio == nullptr) || (size == 0) || (size > 480)) {
++        return;
++    }
++
++    float z0 = 0.0f;
++    for (size_t i = 0; i < (size_t)size; i++) {
++        z0 = audio[i] - a1_ * z1_ - a2_ * z2_;
++        if (fade == filterFade::kFadeOut) {
++            float fadeValue = (float)(size - i) / (float)size;
++            audio[i] = fadeValue * (b0_ * z0 + b1_ * z1_ + b2_ * z2_) + (1.0f - fadeValue) * audio[i];
++        } else if (fade == filterFade::kFadeIn) {
++            float fadeValue = 0.0f;
++            if (i > (size_t)size / 2) {
++                fadeValue = (float)(i - size / 2) / (float)(size - size / 2);
++            }
++            audio[i] = fadeValue * (b0_ * z0 + b1_ * z1_ + b2_ * z2_) + (1.0f - fadeValue) * audio[i];
++        } else {
++            audio[i] = b0_ * z0 + b1_ * z1_ + b2_ * z2_;
++        }
++        z2_ = z1_;
++        z1_ = z0;
++    }
++}
++
++void NotchFilter::copy(const NotchFilter* reference) {
++    z2_ = reference->z2_;
++    z1_ = reference->z1_;
++
++    a2_ = reference->a2_;
++    a1_ = reference->a1_;
++
++    b2_ = reference->b2_;
++    b1_ = reference->b1_;
++    b0_ = reference->b0_;
++}
++
++void NotchFilter::design(int index, float gain, float quality) {
++    if (index < 1) {
++        index = 1;
++    } else if ((size_t)index >= kHsFftSizeBy2) {
++        index = kHsFftSizeBy2 - 1;
++    }
++    float cw = (index * 62.5f) * acosf(-1.0f) / 8000.0f;
++    float bilinear = tanf(cw / 2.0f);
++    float bilinear2 = powf(bilinear, 2.0f);
++
++    float den = 1.0f + bilinear / quality + bilinear2;
++    if (den != 0.0f) {
++        b0_ = (1.0f + gain * bilinear / quality + bilinear2) / den;
++        b1_ = 2.0f * (bilinear2 - 1.0f) / den;
++        b2_ = (1.0f - gain * bilinear / quality + bilinear2) / den;
++        a1_ = 2.0f * (bilinear2 - 1.0f) / den;
++        a2_ = (1.0f - bilinear / quality + bilinear2) / den;
++    }
++}
++
++} // namespace webrtc
+\ No newline at end of file
+diff --git a/modules/audio_processing/hs/notch_filter.h b/modules/audio_processing/hs/notch_filter.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..11670b58c32b5240ccbdd4d12d3fe66b0c6e0a2e
+--- /dev/null
++++ b/modules/audio_processing/hs/notch_filter.h
+@@ -0,0 +1,47 @@
++/*
++ *  Copyright (c) 2012 The WebRTC project authors. All Rights Reserved.
++ *
++ *  Use of this source code is governed by a BSD-style license
++ *  that can be found in the LICENSE file in the root of the source
++ *  tree. An additional intellectual property rights grant can be found
++ *  in the file PATENTS.  All contributing project authors may
++ *  be found in the AUTHORS file in the root of the source tree.
++ */
++
++#ifndef MODULES_AUDIO_PROCESSING_HS_NOTCH_FILTER_H_
++#define MODULES_AUDIO_PROCESSING_HS_NOTCH_FILTER_H_
++
++#include "hs_common.h"
++
++namespace webrtc {
++
++class NotchFilter {
++public:
++    explicit NotchFilter(int index, float gain);
++    ~NotchFilter();
++
++    void reset();
++
++    void redesign(int index, float gain, float quality);
++
++    void runningFilter(float * audio, int size, filterFade fade);
++
++    void copy(const NotchFilter* reference);
++
++private:
++    void design(int index, float gain, float quality);
++
++private:
++    float b0_ = 1.0f;
++    float b1_ = 0.0f;
++    float b2_ = 0.0f;
++    float a1_ = 0.0f;
++    float a2_ = 0.0f;
++
++    float z1_ = 0.0f;
++    float z2_ = 0.0f;
++};
++
++} // namespace webrtc
++
++#endif // MODULES_AUDIO_PROCESSING_HS_NOTCH_FILTER_H_
+diff --git a/modules/audio_processing/include/audio_processing.cc b/modules/audio_processing/include/audio_processing.cc
+index 13ddcc588ae40569be0ec9a8ae8c0556a3c8ac70..bf0f5f3caa0424a7c127a9cb7c188d94653d86a7 100644
+--- a/modules/audio_processing/include/audio_processing.cc
++++ b/modules/audio_processing/include/audio_processing.cc
+@@ -146,6 +146,9 @@ std::string AudioProcessing::Config::ToString() const {
+           << " }, noise_suppression: { enabled: " << noise_suppression.enabled
+           << ", level: "
+           << NoiseSuppressionLevelToString(noise_suppression.level)
++#ifdef WEBRTC_ENABLE_HS
++          << " }, howling_suppression : { enabled: " << howling_suppression.enabled
++#endif // WEBRTC_ENABLE_HS
+           << " }, transient_suppression: { enabled: "
+           << transient_suppression.enabled
+           << " }, gain_controller1: { enabled: " << gain_controller1.enabled
+diff --git a/modules/audio_processing/include/audio_processing.h b/modules/audio_processing/include/audio_processing.h
+index f613a38de1ede6c416754a3e0cd137fec8d06f5a..6c00b56662e277ebdced2acdc6c36fb8a2e0accd 100644
+--- a/modules/audio_processing/include/audio_processing.h
++++ b/modules/audio_processing/include/audio_processing.h
+@@ -220,6 +220,13 @@ class RTC_EXPORT AudioProcessing : public rtc::RefCountInterface {
+       bool analyze_linear_aec_output_when_available = false;
+     } noise_suppression;
+ 
++#ifdef WEBRTC_ENABLE_HS
++    // Enables howling suppression
++    struct HowlingSuppression {
++      bool enabled = false;
++    } howling_suppression;
++#endif // WEBRTC_ENABLE_HS
++
+     // Enables transient suppression.
+     struct TransientSuppression {
+       bool enabled = false;
+diff --git a/webrtc.gni b/webrtc.gni
+index d93fca30a260a4f9d35cd3080e4cc285f0874324..148b8fa22cc3542dffe302183ac40458a728b361 100644
+--- a/webrtc.gni
++++ b/webrtc.gni
+@@ -192,6 +192,9 @@ declare_args() {
+   # rsfecopus 音频编码器开关，默认在mac和Windows上开启
+   rtc_enable_rsfecopus = is_win || is_mac
+ 
++  # 啸叫抑制开关，默认在mac和Windows上开启
++  rtc_enable_audio_processing_hs = is_win || is_mac
++
+   # Enable to use H265
+   rtc_use_h265 = proprietary_codecs
+ 

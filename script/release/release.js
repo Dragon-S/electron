@@ -194,7 +194,7 @@ const cloudStoreFilePaths = (version) => [
 ];
 
 function azRemoteFilesForVersion (version) {
-  const azCDN = 'https://artifacts.electronjs.org/headers/';
+  const azCDN = 'https://electronsll.blob.core.windows.net/headers/';
   const versionPrefix = `${azCDN}dist/${version}/`;
   return cloudStoreFilePaths(version).map((filePath) => ({
     file: filePath,

@@ -44,6 +44,7 @@ class NativeWindowMac : public NativeWindow,
   void ShowInactive() override;
   void Hide() override;
   bool IsVisible() override;
+  bool IsEntirelyCovered() override;
   bool IsEnabled() override;
   void SetEnabled(bool enable) override;
   void Maximize() override;
@@ -104,7 +105,9 @@ class NativeWindowMac : public NativeWindow,
   std::string GetRepresentedFilename() override;
   void SetDocumentEdited(bool edited) override;
   bool IsDocumentEdited() override;
-  void SetIgnoreMouseEvents(bool ignore, bool forward) override;
+  void SetIgnoreMouseEvents(bool ignore,
+                            bool forward,
+                            bool flag = false) override;
   bool IsHiddenInMissionControl() override;
   void SetHiddenInMissionControl(bool hidden) override;
   void SetContentProtection(bool enable) override;

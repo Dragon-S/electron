@@ -60,6 +60,7 @@ class NativeWindowViews : public NativeWindow,
   void ShowInactive() override;
   void Hide() override;
   bool IsVisible() override;
+  bool IsEntirelyCovered() override;
   bool IsEnabled() override;
   void SetEnabled(bool enable) override;
   void Maximize() override;
@@ -119,7 +120,9 @@ class NativeWindowViews : public NativeWindow,
   bool HasShadow() override;
   void SetOpacity(const double opacity) override;
   double GetOpacity() override;
-  void SetIgnoreMouseEvents(bool ignore, bool forward) override;
+  void SetIgnoreMouseEvents(bool ignore,
+                            bool forward,
+                            bool flag = false) override;
   void SetContentProtection(bool enable) override;
   void SetFocusable(bool focusable) override;
   bool IsFocusable() override;
@@ -222,7 +225,7 @@ class NativeWindowViews : public NativeWindow,
 #if BUILDFLAG(IS_WIN)
   void HandleSizeEvent(WPARAM w_param, LPARAM l_param);
   void ResetWindowControls();
-  void SetForwardMouseMessages(bool forward);
+  void SetForwardMouseMessages(bool forward, bool flag = false);
   static LRESULT CALLBACK SubclassProc(HWND hwnd,
                                        UINT msg,
                                        WPARAM w_param,
@@ -232,6 +235,9 @@ class NativeWindowViews : public NativeWindow,
   static LRESULT CALLBACK MouseHookProc(int n_code,
                                         WPARAM w_param,
                                         LPARAM l_param);
+  static LRESULT CALLBACK MouseHookProcEx(int n_code,
+                                          WPARAM w_param,
+                                          LPARAM l_param);
 #endif
 
   // Enable/disable:
@@ -313,6 +319,8 @@ class NativeWindowViews : public NativeWindow,
 
   // Whether the window is currently being moved.
   bool is_moving_ = false;
+
+  static bool mouse_drag_event_;
 
   absl::optional<gfx::Rect> pending_bounds_change_;
 

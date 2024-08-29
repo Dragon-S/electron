@@ -1,0 +1,352 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Fri, 8 Dec 2023 15:28:07 +0800
+Subject: Supports getting bounds of shared windows
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+支持获取共享窗口的大小和坐标
+
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 48799f517e4b83f157c86e9b579cd98007fa47d7..c60c15a1315b95db0551c4b1cc0e1de7060de78c 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -779,6 +779,8 @@ static_library("browser") {
+     "media/webrtc/media_stream_device_permissions.h",
+     "media/webrtc/native_desktop_media_list.cc",
+     "media/webrtc/native_desktop_media_list.h",
++    "media/webrtc/native_desktop_media_frame_bound_indicator.cc",
++    "media/webrtc/native_desktop_media_frame_bound_indicator.h",
+     "media/webrtc/permission_bubble_media_access_handler.cc",
+     "media/webrtc/permission_bubble_media_access_handler.h",
+     "media/webrtc/same_origin_observer.cc",
+diff --git a/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.cc b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..e39077be7bb75bdca4dacec160ee5f4e707ae4cc
+--- /dev/null
++++ b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.cc
+@@ -0,0 +1,36 @@
++#include "chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h"
++#include "base/logging.h"
++
++NativeDesktopMediaFrameBoundIndicator* NativeDesktopMediaFrameBoundIndicator::GetInstance() {
++  return base::Singleton<NativeDesktopMediaFrameBoundIndicator>::get();
++}
++
++NativeDesktopMediaFrameBoundIndicator::NativeDesktopMediaFrameBoundIndicator() = default;
++
++NativeDesktopMediaFrameBoundIndicator::~NativeDesktopMediaFrameBoundIndicator() = default;
++
++void NativeDesktopMediaFrameBoundIndicator::StartObserving(NativeDesktopMediaFrameBoundObserver* observer) {
++  observer_ = observer;
++}
++
++void NativeDesktopMediaFrameBoundIndicator::StopObserving() {
++  observer_ = nullptr;
++}
++
++void NativeDesktopMediaFrameBoundIndicator::OnMediaFrameBoundChanged(const gfx::Rect& bound) {
++  // LOG(ERROR) << "sll-----NativeDesktopMediaFrameBoundIndicator::OnMediaFrameBoundChanged:: "
++  // << "x = " << bound.x()
++  // << ", y = " << bound.y()
++  // << ", width = " << bound.width()
++  // << ", height = " << bound.height();
++
++  if (observer_ != nullptr) {
++    observer_->OnMediaFrameBoundChanged(bound);
++  }
++}
++
++void NativeDesktopMediaFrameBoundIndicator::OnSharedWindowMinimizedStateChanged(const bool minimized) {
++  if (observer_ != nullptr) {
++    observer_->OnSharedWindowMinimizedStateChanged(minimized);
++  }
++}
+\ No newline at end of file
+diff --git a/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..f9d8bf5c4e73212da094904f55b7144cb82fc472
+--- /dev/null
++++ b/chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h
+@@ -0,0 +1,37 @@
++#ifndef CHROME_BROWSER_MEDIA_WEBRTC_NATIVE_DESKTOP_MEDIA_FRAME_BOUND_INDICATOR_H_
++#define CHROME_BROWSER_MEDIA_WEBRTC_NATIVE_DESKTOP_MEDIA_FRAME_BOUND_INDICATOR_H_
++
++#include "base/memory/singleton.h"
++#include "ui/gfx/geometry/rect.h"
++#include "base/memory/raw_ptr.h"
++
++class NativeDesktopMediaFrameBoundObserver {
++ public:
++  virtual void OnMediaFrameBoundChanged(const gfx::Rect& bound) = 0;
++  virtual void OnSharedWindowMinimizedStateChanged(const bool minimized) = 0;
++
++ protected:
++  virtual ~NativeDesktopMediaFrameBoundObserver() {}
++};
++
++class NativeDesktopMediaFrameBoundIndicator {
++ public:
++  static NativeDesktopMediaFrameBoundIndicator* GetInstance();
++
++  void StartObserving(NativeDesktopMediaFrameBoundObserver* observer);
++
++  void StopObserving();
++
++  void OnMediaFrameBoundChanged(const gfx::Rect& bound);
++  void OnSharedWindowMinimizedStateChanged(const bool minimized);
++
++ private:
++  friend struct base::DefaultSingletonTraits<NativeDesktopMediaFrameBoundIndicator>;
++
++  NativeDesktopMediaFrameBoundIndicator();
++  virtual ~NativeDesktopMediaFrameBoundIndicator();
++
++  raw_ptr<NativeDesktopMediaFrameBoundObserver> observer_ = nullptr;
++};
++
++#endif  // CHROME_BROWSER_MEDIA_WEBRTC_NATIVE_DESKTOP_MEDIA_FRAME_BOUND_INDICATOR_H_
+diff --git a/content/browser/media/capture/desktop_capture_device.cc b/content/browser/media/capture/desktop_capture_device.cc
+index db228ce4864d91d7fd97f458e2c0193d5de9ab47..aa8415f807b9a107e65a422b2c16829b1d0655b3 100644
+--- a/content/browser/media/capture/desktop_capture_device.cc
++++ b/content/browser/media/capture/desktop_capture_device.cc
+@@ -54,6 +54,7 @@
+ #include "third_party/webrtc/modules/desktop_capture/fake_desktop_capturer.h"
+ #include "third_party/webrtc/modules/desktop_capture/mouse_cursor_monitor.h"
+ #include "ui/gfx/icc_profile.h"
++#include "chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h"
+ 
+ #if BUILDFLAG(IS_CHROMEOS_LACROS)
+ #include "content/browser/media/capture/desktop_capturer_lacros.h"
+@@ -88,6 +89,13 @@ bool IsFrameUnpackedOrInverted(webrtc::DesktopFrame* frame) {
+       frame->size().width() * webrtc::DesktopFrame::kBytesPerPixel;
+ }
+ 
++void OnMediaFrameBoundChanged(const gfx::Rect& bound) {
++  DCHECK_CURRENTLY_ON(BrowserThread::UI);
++  NativeDesktopMediaFrameBoundIndicator* media_frame_bound_indicator =
++    NativeDesktopMediaFrameBoundIndicator::GetInstance();
++  media_frame_bound_indicator->OnMediaFrameBoundChanged(bound);
++}
++
+ void BindWakeLockProvider(
+     mojo::PendingReceiver<device::mojom::WakeLockProvider> receiver) {
+   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+@@ -481,6 +489,15 @@ void DesktopCaptureDevice::Core::OnCaptureResult(
+                        FROM_HERE, "The desktop capturer has failed.");
+       return;
+     }
++
++    //处理捕获的帧出错的情况
++    if ((capturer_type_ == DesktopMediaID::TYPE_WINDOW)
++      && (BrowserThread::IsThreadInitialized(BrowserThread::UI))) {
++      gfx::Rect bound = gfx::Rect(0, 0, 0, 0);
++      GetUIThreadTaskRunner({})->PostTask(
++          FROM_HERE, base::BindOnce(&OnMediaFrameBoundChanged, bound));
++    }
++
+     // Continue capturing frames in the temporary error case.
+     ScheduleNextCaptureFrame();
+     return;
+@@ -547,6 +564,18 @@ void DesktopCaptureDevice::Core::OnCaptureResult(
+       output_frame_->SetFrameDataToBlack();
+       output_frame_is_black_ = true;
+     }
++
++    //处理捕获窗口最小化
++    if ((capturer_type_ == DesktopMediaID::TYPE_WINDOW)
++      && (BrowserThread::IsThreadInitialized(BrowserThread::UI))) {
++      const webrtc::DesktopRect original_window_rect = frame->original_window_rect();
++      gfx::Rect bound = gfx::Rect(original_window_rect.left(),
++                                  original_window_rect.top(),
++                                  original_window_rect.width(),
++                                  original_window_rect.height());
++      GetUIThreadTaskRunner({})->PostTask(
++          FROM_HERE, base::BindOnce(&OnMediaFrameBoundChanged, bound));
++    }
+   } else {
+     // Scaling frame with odd dimensions to even dimensions will cause
+     // blurring. See https://crbug.com/737278.
+@@ -565,6 +594,17 @@ void DesktopCaptureDevice::Core::OnCaptureResult(
+     DCHECK(frame);
+     DCHECK(!frame->size().is_empty());
+ 
++    if ((capturer_type_ == DesktopMediaID::TYPE_WINDOW)
++      && (BrowserThread::IsThreadInitialized(BrowserThread::UI))) {
++      webrtc::DesktopRect original_window_rect = frame->original_window_rect();
++      gfx::Rect bounds = gfx::Rect(original_window_rect.left(),
++                                  original_window_rect.top(),
++                                  original_window_rect.width(),
++                                  original_window_rect.height());
++      GetUIThreadTaskRunner({})->PostTask(
++          FROM_HERE, base::BindOnce(&OnMediaFrameBoundChanged, bounds));
++    }
++
+     if (!frame->size().equals(output_size)) {
+       VLOG(2) << "  Downscaling: frame->size=(" << frame->size().width() << "x"
+               << frame->size().height() << ")";
+diff --git a/content/browser/media/capture/screen_capture_kit_device_mac.mm b/content/browser/media/capture/screen_capture_kit_device_mac.mm
+index 83c739080a48ced2d03d0a3d4d942910cc4ff4cf..ebbf5dde9051a2655537861a793fd27a3cde9977 100644
+--- a/content/browser/media/capture/screen_capture_kit_device_mac.mm
++++ b/content/browser/media/capture/screen_capture_kit_device_mac.mm
+@@ -17,12 +17,86 @@
+ #include "third_party/abseil-cpp/absl/types/optional.h"
+ #include "third_party/webrtc/modules/desktop_capture/desktop_capture_types.h"
+ #include "ui/gfx/native_widget_types.h"
++#include "chrome/browser/media/webrtc/native_desktop_media_frame_bound_indicator.h"
++#include "content/public/browser/browser_thread.h"
+ 
+ using SampleCallback = base::RepeatingCallback<void(gfx::ScopedInUseIOSurface,
+                                                     absl::optional<gfx::Size>,
+                                                     absl::optional<gfx::Rect>)>;
+ using ErrorCallback = base::RepeatingClosure;
+ 
++bool GetWindowRef(CGWindowID id,
++                  std::function<void(CFDictionaryRef)> on_window) {
++  DCHECK(on_window);
++
++  // TODO(zijiehe): `id` is a 32-bit integer, casting it to an array seems not
++  // safe enough. Maybe we should create a new
++  // const void* arr[] = {
++  //   reinterpret_cast<void*>(id) }
++  // };
++  CFArrayRef window_id_array =
++      CFArrayCreate(NULL, reinterpret_cast<const void**>(&id), 1, NULL);
++  CFArrayRef window_array =
++      CGWindowListCreateDescriptionFromArray(window_id_array);
++
++  bool result = false;
++  // TODO(zijiehe): CFArrayGetCount(window_array) should always return 1.
++  // Otherwise, we should treat it as failure.
++  if (window_array && CFArrayGetCount(window_array)) {
++    on_window(reinterpret_cast<CFDictionaryRef>(
++        CFArrayGetValueAtIndex(window_array, 0)));
++    result = true;
++  }
++
++  if (window_array) {
++    CFRelease(window_array);
++  }
++  CFRelease(window_id_array);
++  return result;
++}
++
++CGRect GetWindowBounds(CFDictionaryRef window) {
++  CGRect result = CGRectMake(0, 0, 0, 0);
++  CFDictionaryRef window_bounds = reinterpret_cast<CFDictionaryRef>(
++      CFDictionaryGetValue(window, kCGWindowBounds));
++  if (!window_bounds) {
++    return result;
++  }
++
++  CGRect gc_window_rect;
++  if (!CGRectMakeWithDictionaryRepresentation(window_bounds, &gc_window_rect)) {
++    return result;
++  }
++
++  return gc_window_rect;
++}
++
++CGRect GetWindowBounds(CGWindowID id) {
++  CGRect result = CGRectMake(0, 0, 0, 0);
++  if (GetWindowRef(id, [&result](CFDictionaryRef window) {
++        result = GetWindowBounds(window);
++      })) {
++    return result;
++  }
++  return result;
++}
++
++bool IsWindowOnScreen(CFDictionaryRef window) {
++  CFBooleanRef on_screen = reinterpret_cast<CFBooleanRef>(
++      CFDictionaryGetValue(window, kCGWindowIsOnscreen));
++  return on_screen != NULL && CFBooleanGetValue(on_screen);
++}
++
++bool IsWindowOnScreen(CGWindowID id) {
++  bool on_screen = false;
++  if (GetWindowRef(id, [&on_screen](CFDictionaryRef window) {
++        on_screen = IsWindowOnScreen(window);
++      })) {
++    return on_screen;
++  }
++  return on_screen;
++}
++
+ API_AVAILABLE(macos(12.3))
+ @interface ScreenCaptureKitDeviceHelper
+     : NSObject <SCStreamDelegate, SCStreamOutput>
+@@ -131,6 +205,20 @@ + (SCStreamConfiguration*)streamConfigurationWithFrameSize:(gfx::Size)frameSize
+ 
+ namespace content {
+ 
++void OnMediaFrameBoundChanged(const gfx::Rect& bound) {
++  DCHECK_CURRENTLY_ON(BrowserThread::UI);
++  NativeDesktopMediaFrameBoundIndicator* media_frame_bound_indicator =
++    NativeDesktopMediaFrameBoundIndicator::GetInstance();
++  media_frame_bound_indicator->OnMediaFrameBoundChanged(bound);
++}
++
++void OnSharedWindowMinimizedStateChanged(bool minimized) {
++  DCHECK_CURRENTLY_ON(BrowserThread::UI);
++  NativeDesktopMediaFrameBoundIndicator* media_frame_bound_indicator =
++    NativeDesktopMediaFrameBoundIndicator::GetInstance();
++  media_frame_bound_indicator->OnSharedWindowMinimizedStateChanged(minimized);
++}
++
+ namespace {
+ 
+ class API_AVAILABLE(macos(12.3)) ScreenCaptureKitDeviceMac
+@@ -361,6 +449,25 @@ void OnStreamError() {
+     }
+   }
+ 
++  void CheckForBoundsChange() {
++    bool isMinimized = !IsWindowOnScreen(source_.id);
++    if ((source_.type == DesktopMediaID::TYPE_WINDOW)
++      && (BrowserThread::IsThreadInitialized(BrowserThread::UI))) {
++      gfx::Rect bounds = gfx::Rect(0, 0, 0, 0);
++      if (!isMinimized) {
++        CGRect frame = GetWindowBounds(source_.id);
++        bounds = gfx::Rect(frame.origin.x,
++                  frame.origin.y,
++                  frame.size.width,
++                  frame.size.height);
++      }
++      GetUIThreadTaskRunner({})->PostTask(
++          FROM_HERE, base::BindOnce(&OnMediaFrameBoundChanged, bounds));
++      GetUIThreadTaskRunner({})->PostTask(
++        FROM_HERE, base::BindOnce(&OnSharedWindowMinimizedStateChanged, isMinimized));
++    }
++  }
++
+   // IOSurfaceCaptureDeviceBase:
+   void OnStart() override {
+     auto content_callback = base::BindPostTask(
+@@ -372,8 +479,16 @@ void OnStart() override {
+       content_callback.Run(content);
+     };
+     [SCShareableContent getShareableContentWithCompletionHandler:handler];
++
++    // 开启定时器检查窗口状态
++    timer_.Start(
++        FROM_HERE, base::Milliseconds(800), this,
++        &ScreenCaptureKitDeviceMac::CheckForBoundsChange);
+   }
+   void OnStop() override {
++    // 停止定时器
++    timer_.Stop();
++
+     if (stream_) {
+       auto stream_started_callback = base::BindPostTask(
+           device_task_runner_,
+@@ -448,6 +563,8 @@ void ResetStreamTo(SCWindow* window) override {
+   // The stream that does the capturing.
+   SCStream* __strong stream_;
+ 
++  base::RepeatingTimer timer_;
++
+   base::WeakPtrFactory<ScreenCaptureKitDeviceMac> weak_factory_{this};
+ };
+ 

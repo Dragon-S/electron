@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dragon-S <15919917852@163.com>
+Date: Fri, 5 Jan 2024 11:26:21 +0800
+Subject: win10 shared PowerPoint bug
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+win10上PowerPoint共享播放ppt，接收端显示画面部分缺失。主要由于全屏窗口标题带了[]
+
+diff --git a/modules/desktop_capture/win/full_screen_win_application_handler.cc b/modules/desktop_capture/win/full_screen_win_application_handler.cc
+index 4222dfc01e7c6439cc0870c84616078f3409f503..23f74c22ac0bb0e1c3a26fb7a09a0e308d1c18f5 100644
+--- a/modules/desktop_capture/win/full_screen_win_application_handler.cc
++++ b/modules/desktop_capture/win/full_screen_win_application_handler.cc
+@@ -115,13 +115,15 @@ class FullScreenPowerPointHandler : public FullScreenApplicationHandler {
+       return 0;
+ 
+     const auto original_document = GetDocumentFromEditorTitle(original_window);
++    const std::string original_document_ex = "[" + original_document + "]";
+ 
+     for (const auto& source : powerpoint_windows) {
+       HWND window = reinterpret_cast<HWND>(source.id);
+ 
+       // Looking for slide show window for the same document
++      const std::string slide_show_title = GetDocumentFromSlideShowTitle(window);
+       if (GetWindowType(window) != WindowType::kSlideShow ||
+-          GetDocumentFromSlideShowTitle(window) != original_document) {
++          (slide_show_title != original_document && slide_show_title != original_document_ex)) {
+         continue;
+       }
+ 

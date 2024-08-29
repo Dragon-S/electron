@@ -87,6 +87,7 @@ class NativeWindow : public base::SupportsUserData,
   virtual void ShowInactive() = 0;
   virtual void Hide() = 0;
   virtual bool IsVisible() = 0;
+  virtual bool IsEntirelyCovered() = 0;
   virtual bool IsEnabled() = 0;
   virtual void SetEnabled(bool enable) = 0;
   virtual void Maximize() = 0;
@@ -180,7 +181,9 @@ class NativeWindow : public base::SupportsUserData,
   virtual std::string GetRepresentedFilename();
   virtual void SetDocumentEdited(bool edited);
   virtual bool IsDocumentEdited();
-  virtual void SetIgnoreMouseEvents(bool ignore, bool forward) = 0;
+  virtual void SetIgnoreMouseEvents(bool ignore,
+                                    bool forward,
+                                    bool flag = false) = 0;
   virtual void SetContentProtection(bool enable) = 0;
   virtual void SetFocusable(bool focusable);
   virtual bool IsFocusable();

@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Mon, 11 Dec 2023 14:09:55 +0800
+Subject: get minimized state of shared window
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+取共享窗口最小化状态
+
+diff --git a/modules/desktop_capture/desktop_frame.cc b/modules/desktop_capture/desktop_frame.cc
+index 5235e351b4ecc7243febffe5f9e28e344802db06..482d474ba0443058c3b4ce75cda6ecfe0a42ba41 100644
+--- a/modules/desktop_capture/desktop_frame.cc
++++ b/modules/desktop_capture/desktop_frame.cc
+@@ -133,6 +133,7 @@ void DesktopFrame::CopyFrameInfoFrom(const DesktopFrame& other) {
+   *mutable_updated_region() = other.updated_region();
+   set_top_left(other.top_left());
+   set_original_window_rect(other.original_window_rect());
++  set_shared_window_minimized(other.shared_window_minimized());
+   set_icc_profile(other.icc_profile());
+   set_may_contain_cursor(other.may_contain_cursor());
+ }
+@@ -145,6 +146,7 @@ void DesktopFrame::MoveFrameInfoFrom(DesktopFrame* other) {
+   set_top_left(other->top_left());
+   set_icc_profile(other->icc_profile());
+   set_original_window_rect(other->original_window_rect());
++  set_shared_window_minimized(other->shared_window_minimized());
+   set_may_contain_cursor(other->may_contain_cursor());
+ }
+ 
+diff --git a/modules/desktop_capture/desktop_frame.h b/modules/desktop_capture/desktop_frame.h
+index 937915b2181a8f98679b6b676c907144466553f9..385a138286086b2dcddeaae340f71d28251c05e4 100644
+--- a/modules/desktop_capture/desktop_frame.h
++++ b/modules/desktop_capture/desktop_frame.h
+@@ -154,6 +154,11 @@ class RTC_EXPORT DesktopFrame {
+     original_window_rect_ = new_rect;
+   }
+ 
++  bool shared_window_minimized() const { return shared_window_minimized_; }
++  void set_shared_window_minimized(bool shared_window_minimized) {
++    shared_window_minimized_ = shared_window_minimized;
++  }
++
+  protected:
+   DesktopFrame(DesktopSize size,
+                int stride,
+@@ -178,6 +183,7 @@ class RTC_EXPORT DesktopFrame {
+   uint32_t capturer_id_;
+   std::vector<uint8_t> icc_profile_;
+   DesktopRect original_window_rect_;
++  bool shared_window_minimized_ = false;
+ };
+ 
+ // A DesktopFrame that stores data in the heap.
+diff --git a/modules/desktop_capture/win/window_capturer_win_gdi.cc b/modules/desktop_capture/win/window_capturer_win_gdi.cc
+index 0b8b2af66f580cb8ddb58d83f227592a4f2a9f8a..7fbf909d2c47fc277add32339a990c6af2614d9c 100644
+--- a/modules/desktop_capture/win/window_capturer_win_gdi.cc
++++ b/modules/desktop_capture/win/window_capturer_win_gdi.cc
+@@ -221,6 +221,10 @@ WindowCapturerWinGdi::CaptureResults WindowCapturerWinGdi::CaptureFrame(
+ 
+     previous_size_ = frame->size();
+     window_size_map_[window_] = previous_size_;
++
++    bool minimized = (IsIconic(window_) != 0);
++    frame->set_shared_window_minimized(minimized);
++
+     return {Result::SUCCESS, std::move(frame)};
+   }
+ 
+@@ -395,6 +399,9 @@ WindowCapturerWinGdi::CaptureResults WindowCapturerWinGdi::CaptureFrame(
+ 
+   cropped_frame->set_original_window_rect(original_widnow_rect);
+ 
++  bool minimized = (IsIconic(window_) != 0);
++  cropped_frame->set_shared_window_minimized(minimized);
++
+   return {Result::SUCCESS, std::move(cropped_frame)};
+ }
+ 
+diff --git a/modules/desktop_capture/window_capturer_mac.mm b/modules/desktop_capture/window_capturer_mac.mm
+index d7aae60187b96fb91480c8805e26d46b95f3e8f2..72ca88d1f33bcaeb396f81c2a64ebf70cde9bb06 100644
+--- a/modules/desktop_capture/window_capturer_mac.mm
++++ b/modules/desktop_capture/window_capturer_mac.mm
+@@ -208,6 +208,9 @@ explicit WindowCapturerMac(
+   float scale_factor = GetWindowScaleFactor(window_id_, frame->size());
+   frame->set_dpi(DesktopVector(kStandardDPI * scale_factor, kStandardDPI * scale_factor));
+ 
++  bool is_window_on_screen = IsWindowOnScreen(on_screen_window);
++  frame->set_shared_window_minimized(!is_window_on_screen);
++
+   callback_->OnCaptureResult(Result::SUCCESS, std::move(frame));
+ }
+ 

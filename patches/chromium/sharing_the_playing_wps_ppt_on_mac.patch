@@ -1,0 +1,275 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Mon, 18 Dec 2023 16:50:27 +0800
+Subject: sharing the playing wps ppt on mac
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+在Mac12.3以上共享wps ppt, ppt播放后远端看不到播放画面
+
+diff --git a/content/browser/media/capture/screen_capture_kit_device_mac.mm b/content/browser/media/capture/screen_capture_kit_device_mac.mm
+index ebbf5dde9051a2655537861a793fd27a3cde9977..f473d6409f7020b7a859947d562384feb136659d 100644
+--- a/content/browser/media/capture/screen_capture_kit_device_mac.mm
++++ b/content/browser/media/capture/screen_capture_kit_device_mac.mm
+@@ -179,6 +179,7 @@ - (void)stream:(SCStream*)stream
+ }
+ 
+ - (void)stream:(SCStream*)stream didStopWithError:(NSError*)error {
++  LOG(ERROR) << "ScreenCaptureKitDeviceHelper::didStopWithError::Error = " << [error localizedDescription];
+   _errorCallback.Run();
+ }
+ 
+@@ -228,6 +229,7 @@ class API_AVAILABLE(macos(12.3)) ScreenCaptureKitDeviceMac
+   explicit ScreenCaptureKitDeviceMac(const DesktopMediaID& source)
+       : source_(source),
+         device_task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()) {
++    window_id_ = source_.id;
+     SampleCallback sample_callback = base::BindPostTask(
+         base::SingleThreadTaskRunner::GetCurrentDefault(),
+         base::BindRepeating(&ScreenCaptureKitDeviceMac::OnStreamSample,
+@@ -447,15 +449,19 @@ void OnStreamError() {
+       client()->OnError(media::VideoCaptureError::kScreenCaptureKitStreamError,
+                         FROM_HERE, "Stream delegate called didStopWithError");
+     }
++
++    if (fullscreen_module_) {
++      fullscreen_module_->on_stream_error();
++    }
+   }
+ 
+   void CheckForBoundsChange() {
+-    bool isMinimized = !IsWindowOnScreen(source_.id);
++    bool isMinimized = !IsWindowOnScreen(window_id_);
+     if ((source_.type == DesktopMediaID::TYPE_WINDOW)
+       && (BrowserThread::IsThreadInitialized(BrowserThread::UI))) {
+       gfx::Rect bounds = gfx::Rect(0, 0, 0, 0);
+       if (!isMinimized) {
+-        CGRect frame = GetWindowBounds(source_.id);
++        CGRect frame = GetWindowBounds(window_id_);
+         bounds = gfx::Rect(frame.origin.x,
+                   frame.origin.y,
+                   frame.size.width,
+@@ -481,13 +487,17 @@ void OnStart() override {
+     [SCShareableContent getShareableContentWithCompletionHandler:handler];
+ 
+     // 开启定时器检查窗口状态
+-    timer_.Start(
+-        FROM_HERE, base::Milliseconds(800), this,
+-        &ScreenCaptureKitDeviceMac::CheckForBoundsChange);
++    if (source_.type == DesktopMediaID::TYPE_WINDOW) {
++      timer_.Start(
++          FROM_HERE, base::Milliseconds(800), this,
++          &ScreenCaptureKitDeviceMac::CheckForBoundsChange);
++    }
+   }
+   void OnStop() override {
+     // 停止定时器
+-    timer_.Stop();
++    if (source_.type == DesktopMediaID::TYPE_WINDOW) {
++      timer_.Stop();
++    }
+ 
+     if (stream_) {
+       auto stream_started_callback = base::BindPostTask(
+@@ -524,6 +534,7 @@ void ResetStreamTo(SCWindow* window) override {
+     is_resetting_ = true;
+     SCContentFilter* filter =
+         [[SCContentFilter alloc] initWithDesktopIndependentWindow:window];
++    window_id_ = window.windowID;
+ 
+     [stream_ updateContentFilter:filter
+                completionHandler:^(NSError* _Nullable error) {
+@@ -565,6 +576,8 @@ void ResetStreamTo(SCWindow* window) override {
+ 
+   base::RepeatingTimer timer_;
+ 
++  CGWindowID window_id_ = kCGNullWindowID;
++
+   base::WeakPtrFactory<ScreenCaptureKitDeviceMac> weak_factory_{this};
+ };
+ 
+diff --git a/content/browser/media/capture/screen_capture_kit_fullscreen_module.h b/content/browser/media/capture/screen_capture_kit_fullscreen_module.h
+index def9d09cb0255b81c695d54f9684bf5e61d582dd..69bd99d74d4a4f0ebd577f55664509b63273fff7 100644
+--- a/content/browser/media/capture/screen_capture_kit_fullscreen_module.h
++++ b/content/browser/media/capture/screen_capture_kit_fullscreen_module.h
+@@ -35,7 +35,8 @@ class API_AVAILABLE(macos(12.3))
+     kOpenOffice = 2,
+     kKeynote = 3,
+     kLibreOffice = 4,
+-    kMaxValue = kLibreOffice,
++    kWpsOffice = 5,
++    kMaxValue = kWpsOffice,
+   };
+ 
+   using ContentHandler = base::OnceCallback<void(SCShareableContent*)>;
+@@ -63,8 +64,12 @@ class API_AVAILABLE(macos(12.3))
+     get_shareable_content_for_test_ = get_shareable_content;
+   }
+ 
++  void on_stream_error();
++
+  private:
++  void CheckForFullscreenPresentationEx();
+   void CheckForFullscreenPresentation();
++  void OnFullscreenShareableContentCreatedEx(SCShareableContent* content);
+   void OnFullscreenShareableContentCreated(SCShareableContent* content);
+   void OnExitFullscreenShareableContentCreated(SCShareableContent* content);
+   SCWindow* GetFullscreenWindow(SCShareableContent* content,
+diff --git a/content/browser/media/capture/screen_capture_kit_fullscreen_module.mm b/content/browser/media/capture/screen_capture_kit_fullscreen_module.mm
+index 21c548773c6ece9f4708edfb850cdf212c245738..d4d896141c59219027e02c5764eb29664834afe6 100644
+--- a/content/browser/media/capture/screen_capture_kit_fullscreen_module.mm
++++ b/content/browser/media/capture/screen_capture_kit_fullscreen_module.mm
+@@ -19,10 +19,13 @@
+              base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+ static NSString* const kApplicationNameKeynote = @"Keynote";
++static NSString* const kApplicationNameKeynoteZH = @"Keynote 讲演";
+ static NSString* const kApplicationNameLibreOffice = @"LibreOffice";
+ static NSString* const kApplicationNamePowerPoint = @"Microsoft PowerPoint";
+ static NSString* const kApplicationNameOpenOffice = @"OpenOffice";
+ 
++static NSString* const kApplicationNameWpsOffice = @"WPS Office";
++
+ static NSString* const kEditorWindowNameOpenOffice = @" OpenOffice Impress";
+ 
+ bool IsPowerPointSlideShow(NSString* window_title) {
+@@ -78,6 +81,18 @@ bool API_AVAILABLE(macos(12.3))
+       return true;
+     }
+   }
++
++  // mac 单刘海屏，需要额外判断
++  if (displays.count == 1) {
++    CGRect frame = CGRectMake(window.frame.origin.x,
++                              window.frame.origin.y - window.frame.origin.y,
++                              window.frame.size.width,
++                              window.frame.size.height + window.frame.origin.y);
++    if (CGRectEqualToRect(frame, [displays firstObject].frame)) {
++      return true;
++    }
++  }
++
+   return false;
+ }
+ 
+@@ -106,6 +121,9 @@ void API_AVAILABLE(macos(12.3))
+           ScreenCaptureKitFullscreenModule::Mode::kPowerPoint);
+     }
+     if ([kApplicationNameKeynote
++            isEqualToString:original_window.owningApplication
++                                .applicationName] ||
++        [kApplicationNameKeynoteZH
+             isEqualToString:original_window.owningApplication
+                                 .applicationName]) {
+       return std::make_unique<ScreenCaptureKitFullscreenModule>(
+@@ -129,6 +147,14 @@ void API_AVAILABLE(macos(12.3))
+       LogModeToUma(ScreenCaptureKitFullscreenModule::Mode::kLibreOffice);
+       return nullptr;
+     }
++    if ([kApplicationNameWpsOffice
++            isEqualToString:original_window.owningApplication
++                                .applicationName]) {
++      return std::make_unique<ScreenCaptureKitFullscreenModule>(
++          device_task_runner, reset_stream_interface, original_window.windowID,
++          original_window.owningApplication.processID,
++          ScreenCaptureKitFullscreenModule::Mode::kWpsOffice);
++    }
+   }
+   LogModeToUma(ScreenCaptureKitFullscreenModule::Mode::kUnsupported);
+   return nullptr;
+@@ -167,6 +193,53 @@ void API_AVAILABLE(macos(12.3))
+   fullscreen_window_id_ = 0;
+ }
+ 
++void ScreenCaptureKitFullscreenModule::on_stream_error() {
++  // 如果共享stream报错，那么用原窗口重置stream
++  CheckForFullscreenPresentationEx();
++}
++
++void ScreenCaptureKitFullscreenModule::CheckForFullscreenPresentationEx() {
++  DCHECK(device_task_runner_->RunsTasksInCurrentSequence());
++  auto content_callback = base::BindPostTask(
++      device_task_runner_,
++      base::BindRepeating(&ScreenCaptureKitFullscreenModule::
++                              OnFullscreenShareableContentCreatedEx,
++                          weak_factory_.GetWeakPtr()));
++
++  if (get_shareable_content_for_test_) {
++    get_shareable_content_for_test_.Run(content_callback);
++  } else {
++    auto handler = ^(SCShareableContent* content, NSError* error) {
++      content_callback.Run(content);
++    };
++    [SCShareableContent getShareableContentExcludingDesktopWindows:true
++                                               onScreenWindowsOnly:false
++                                                 completionHandler:handler];
++  }
++}
++
++void ScreenCaptureKitFullscreenModule::OnFullscreenShareableContentCreatedEx(
++    SCShareableContent* content) {
++  DCHECK(device_task_runner_->RunsTasksInCurrentSequence());
++  if (!content) {
++    return;
++  }
++  SCWindow* editor_window = nullptr;
++  for (SCWindow* window in content.windows) {
++    if (window.windowID == original_window_id_) {
++      editor_window = window;
++    }
++  }
++  if (editor_window) {
++    if (editor_window.onScreen) {
++      fullscreen_mode_active_ = false;
++      reset_stream_interface_.ResetStreamTo(editor_window);
++    }
++  } else {
++    LOG(ERROR) << "OnFullscreenShareableContentCreatedEx::editor_window is null";
++  }
++}
++
+ void ScreenCaptureKitFullscreenModule::CheckForFullscreenPresentation() {
+   DCHECK(device_task_runner_->RunsTasksInCurrentSequence());
+   auto content_callback = base::BindPostTask(
+@@ -241,6 +314,7 @@ void API_AVAILABLE(macos(12.3))
+   DCHECK(device_task_runner_->RunsTasksInCurrentSequence());
+   SCWindow* fullscreen_window = nullptr;
+   int fullscreenWindowLayer = 0;
++  int wps_flag = 0;
+   for (SCWindow* window in content.windows) {
+     // Only check windows that belong to the same application as the original
+     // window.
+@@ -275,6 +349,14 @@ void API_AVAILABLE(macos(12.3))
+             fullscreenWindowLayer = window.windowLayer;
+           }
+           break;
++        case Mode::kWpsOffice:
++          // wps ppt 播放状态与其他office不一样，在播放的时候会将全屏窗口创建在新的屏幕上
++          // 因此，全屏窗口在屏幕上时，原窗口就不在屏幕上
++          if (window.windowLayer == 0 && !editor_window.onScreen) {
++            fullscreen_window = window;
++            wps_flag++;
++          }
++          break;
+         case Mode::kLibreOffice:
+         // TODO(crbug.com/1348011): Implement support for LibreOffice.
+         case Mode::kUnsupported:
+@@ -282,6 +364,17 @@ void API_AVAILABLE(macos(12.3))
+       }
+     }
+   }
++
++  // wps 播放ppt时，创建全屏窗口的过程较慢，而且在创建过程中会有较多的全屏窗口出现，
++  // 最后会稳定为一个用于显示播放ppt的全屏窗口
++  if (mode_ == Mode::kWpsOffice) {
++    if (wps_flag == 1) {
++      return fullscreen_window;
++    } else {
++      return nullptr;
++    }
++  }
++
+   return fullscreen_window;
+ }
+ 

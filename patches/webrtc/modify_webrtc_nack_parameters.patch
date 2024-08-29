@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lorne <lorne.shi@gmail.com>
+Date: Thu, 21 Dec 2023 14:18:26 +0800
+Subject: Modify webrtc nack parameters
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+同步webrtc70中修改的nack参数
+
+diff --git a/modules/video_coding/nack_requester.cc b/modules/video_coding/nack_requester.cc
+index 008420f4da4f48cf14e1bb9d6b689537a06f56b6..8d8d5d5213cefcb33e4f37e71b949f76c8cf6592 100644
+--- a/modules/video_coding/nack_requester.cc
++++ b/modules/video_coding/nack_requester.cc
+@@ -24,8 +24,8 @@ namespace webrtc {
+ namespace {
+ constexpr int kMaxPacketAge = 10'000;
+ constexpr int kMaxNackPackets = 1000;
+-constexpr TimeDelta kDefaultRtt = TimeDelta::Millis(100);
+-constexpr int kMaxNackRetries = 10;
++constexpr TimeDelta kDefaultRtt = TimeDelta::Millis(25);
++constexpr int kMaxNackRetries = 40;
+ constexpr int kMaxReorderedPackets = 128;
+ constexpr int kNumReorderingBuckets = 10;
+ constexpr TimeDelta kDefaultSendNackDelay = TimeDelta::Zero();

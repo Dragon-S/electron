@@ -574,6 +574,11 @@ bool NativeWindowMac::IsVisible() {
   return [window_ isVisible] && !occluded && !IsMinimized();
 }
 
+// 此接口只支持Windows，mac 永远返回false
+bool NativeWindowMac::IsEntirelyCovered() {
+  return false;
+}
+
 bool NativeWindowMac::IsEnabled() {
   return [window_ attachedSheet] == nil;
 }
@@ -1266,7 +1271,9 @@ void NativeWindowMac::SetHiddenInMissionControl(bool hidden) {
   SetCollectionBehavior(hidden, NSWindowCollectionBehaviorTransient);
 }
 
-void NativeWindowMac::SetIgnoreMouseEvents(bool ignore, bool forward) {
+void NativeWindowMac::SetIgnoreMouseEvents(bool ignore,
+                                           bool forward,
+                                           bool flag) {
   [window_ setIgnoresMouseEvents:ignore];
   if (!ignore) {
     SetForwardMouseMessages(NO);
